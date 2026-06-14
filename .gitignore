@@ -8,8 +8,8 @@ build/
 # Imagenes generadas por el preview
 preview.png
 
-# Documentos de planeacion / notas (no subir al repo)
-*.md
+# Archivos de herramientas de IA (no subir al repo)
+CLAUDE.md
 
 # Editores / sistema
 .vscode/
