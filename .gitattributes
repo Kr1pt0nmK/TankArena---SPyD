@@ -1,0 +1,8 @@
+# Normaliza finales de linea: en el repo siempre LF, sin importar el SO.
+# Evita conflictos falsos entre quienes trabajan en Windows y en Linux.
+* text=auto eol=lf
+
+# Archivos binarios: que Git no los toque.
+*.png binary
+*.pdf binary
+*.glade text eol=lf
