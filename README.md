@@ -86,7 +86,6 @@ Como una app de Linux habla con una de Windows, el protocolo debe ser independie
 - **Build:** CMake → se abre en **Visual Studio** (Windows) y compila con `gcc`/`make` (Linux)
 
 > ⚠️ **Setup más latoso:** compilar GTK dentro de Visual Studio (MSVC) en Windows. Rutas que
-> funcionan: **vcpkg** (integra GTK con VS) o **MSYS2/MinGW**. Que una persona lo resuelva el
-> día 1 antes de que todos avancen.
+> funcionan: **vcpkg** (integra GTK con VS) o **MSYS2/MinGW**.
 
 ---
