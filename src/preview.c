@@ -7,12 +7,13 @@ int main(void)
 {
     GameState gs;
     game_init(&gs);
+    game_add_player(&gs, 0);
+    gs.local_id = 0;
 
-    /* Apuntar la torreta del jugador hacia arriba-derecha y disparar,
-       para capturar balas, fogonazo y explosiones en plena accion. */
-    gs.mouse_x = VIEW_W * 0.72;
-    gs.mouse_y = VIEW_H * 0.25;
-    gs.fire_mouse = true;
+    /* Apunta la torreta y dispara para capturar balas, fogonazo y explosiones. */
+    Tank *p = &gs.players[0];
+    p->in.aim = -0.6;
+    p->in.fire = true;
     for (int i = 0; i < 70; i++)
         game_update(&gs);
 

@@ -6,9 +6,16 @@
 #define PLAYER_FIRE_CD 12
 #define BULLET_SPEED   6.0
 #define BULLET_LIFE    170
+#define MOVE_SPEED     2.6
+#define ROT_SPEED      0.05
 
-static const double PLAYER_START_X = VIEW_W * 0.5;
-static const double PLAYER_START_Y = VIEW_H - TILE * 2.5;
+/* ---- Puntos de aparicion de los jugadores (zona baja, separados) ---- */
+static const double SPAWN_X[MAX_PLAYERS] = {
+    VIEW_W * 0.5, TILE * 2.5, VIEW_W - TILE * 2.5, VIEW_W * 0.5
+};
+static const double SPAWN_Y[MAX_PLAYERS] = {
+    VIEW_H - TILE * 2.5, VIEW_H - TILE * 2.5, VIEW_H - TILE * 2.5, VIEW_H - TILE * 4.0
+};
 
 /* ---- Mapa de la arena. 1 = pared, 0 = piso. ---- */
 static int g_map[MAP_H * MAP_W];
@@ -57,6 +64,22 @@ static bool collision_free(const GameState *gs, double x, double y)
     return true;
 }
 
+/* ---------- visuales ---------- */
+
+void game_set_player_visual(Tank *t, int id)
+{
+    static const double C[MAX_PLAYERS][3] = {
+        { 0.18, 0.77, 0.71 },  /* cian   */
+        { 0.96, 0.78, 0.25 },  /* amarillo */
+        { 0.66, 0.45, 0.95 },  /* morado */
+        { 0.40, 0.85, 0.40 },  /* verde  */
+    };
+    int k = id & 3;
+    t->cr = C[k][0]; t->cg = C[k][1]; t->cb = C[k][2];
+}
+
+void game_set_enemy_visual(Tank *t) { t->cr = 0.90; t->cg = 0.22; t->cb = 0.27; }
+
 /* ---------- spawn helpers ---------- */
 
 static void spawn_particle(GameState *gs, double x, double y, double vx, double vy,
@@ -81,7 +104,6 @@ static void spawn_blast(GameState *gs, double x, double y, double scale)
         bl->active = true;
         break;
     }
-    /* chispas */
     int n = (int)(12 * scale);
     for (int i = 0; i < n; i++) {
         double a = frand() * M_PI * 2.0;
@@ -91,7 +113,6 @@ static void spawn_blast(GameState *gs, double x, double y, double scale)
                        12 + frand() * 16, 2 + frand() * 3,
                        1.0, tint, 0.2 + frand() * 0.2);
     }
-    /* humo */
     for (int i = 0; i < 5; i++) {
         double a = frand() * M_PI * 2.0;
         double sp = (0.3 + frand()) * scale;
@@ -103,7 +124,7 @@ static void spawn_blast(GameState *gs, double x, double y, double scale)
     if (gs->shake > 12) gs->shake = 12;
 }
 
-static void spawn_bullet(GameState *gs, const Tank *t, bool from_player)
+static void spawn_bullet(GameState *gs, const Tank *t, int owner)
 {
     double tipx = t->x + cos(t->turret_angle) * 30.0;
     double tipy = t->y + sin(t->turret_angle) * 30.0;
@@ -113,7 +134,7 @@ static void spawn_bullet(GameState *gs, const Tank *t, bool from_player)
         b->x = tipx; b->y = tipy;
         b->vx = cos(t->turret_angle) * BULLET_SPEED;
         b->vy = sin(t->turret_angle) * BULLET_SPEED;
-        b->life = BULLET_LIFE; b->active = true; b->from_player = from_player;
+        b->life = BULLET_LIFE; b->active = true; b->owner = owner;
         return;
     }
 }
@@ -125,21 +146,48 @@ static void place_at_open_tile(GameState *gs, Tank *t)
         int ty = 1 + rand() % (MAP_H - 2);
         if (gs->map[ty * MAP_W + tx] == 1) continue;
         double cx = tx * TILE + TILE / 2.0, cy = ty * TILE + TILE / 2.0;
-        if (hypot(cx - gs->player.x, cy - gs->player.y) < 4 * TILE) continue;
+
+        bool near = false;
+        for (int i = 0; i < MAX_PLAYERS; i++) {
+            Tank *p = &gs->players[i];
+            if (p->active && hypot(cx - p->x, cy - p->y) < 4 * TILE) { near = true; break; }
+        }
+        if (near) continue;
         t->x = cx; t->y = cy;
         return;
     }
 }
 
-/* ---------- init ---------- */
-
 static void init_enemy(Tank *e)
 {
     e->body_angle = e->turret_angle = M_PI / 2.0;
-    e->cr = 0.90; e->cg = 0.22; e->cb = 0.27;
-    e->alive = true; e->muzzle = 0;
+    game_set_enemy_visual(e);
+    e->alive = true; e->active = true; e->muzzle = 0; e->hp = 1;
     e->fire_timer = 60 + rand() % 120;
     e->respawn = 0;
+}
+
+/* ---------- init / jugadores ---------- */
+
+void game_add_player(GameState *gs, int id)
+{
+    if (id < 0 || id >= MAX_PLAYERS) return;
+    Tank *p = &gs->players[id];
+    p->x = SPAWN_X[id]; p->y = SPAWN_Y[id];
+    p->body_angle = -M_PI / 2.0;
+    p->turret_angle = -M_PI / 2.0;
+    game_set_player_visual(p, id);
+    p->active = true; p->alive = true;
+    p->hp = 100; p->score = 0;
+    p->muzzle = 0; p->fire_cd = 0; p->respawn = 0;
+    p->in = (Input){0};
+}
+
+void game_remove_player(GameState *gs, int id)
+{
+    if (id < 0 || id >= MAX_PLAYERS) return;
+    gs->players[id].active = false;
+    gs->players[id].alive = false;
 }
 
 void game_init(GameState *gs)
@@ -148,26 +196,13 @@ void game_init(GameState *gs)
     build_map();
     gs->map = g_map;
     gs->ticks = 0;
-    gs->key_up = gs->key_down = gs->key_left = gs->key_right = false;
-    gs->fire_kb = gs->fire_mouse = false;
-    gs->mouse_x = VIEW_W * 0.5;
-    gs->mouse_y = VIEW_H * 0.3;
-    gs->player_fire_cd = 0;
-    gs->player_hp = 100;
-    gs->score = 0;
     gs->shake = 0;
+    gs->local_id = -1;
 
+    for (int i = 0; i < MAX_PLAYERS; i++)   { gs->players[i].active = false; gs->players[i].alive = false; }
     for (int i = 0; i < MAX_BULLETS; i++)   gs->bullets[i].active = false;
     for (int i = 0; i < MAX_PARTICLES; i++) gs->particles[i].active = false;
     for (int i = 0; i < MAX_BLASTS; i++)    gs->blasts[i].active = false;
-
-    gs->player.x = PLAYER_START_X;
-    gs->player.y = PLAYER_START_Y;
-    gs->player.body_angle = -M_PI / 2.0;
-    gs->player.turret_angle = -M_PI / 2.0;
-    gs->player.cr = 0.18; gs->player.cg = 0.77; gs->player.cb = 0.71;
-    gs->player.alive = true; gs->player.muzzle = 0;
-    gs->player.fire_timer = 0; gs->player.respawn = 0;
 
     gs->enemy_count = MAX_ENEMIES;
     double ex[MAX_ENEMIES] = { TILE * 2.5, VIEW_W - TILE * 2.5, VIEW_W * 0.5 };
@@ -180,6 +215,78 @@ void game_init(GameState *gs)
 }
 
 /* ---------- update ---------- */
+
+static Tank *nearest_player(GameState *gs, const Tank *from)
+{
+    Tank *best = NULL;
+    double bd = 1e18;
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        Tank *p = &gs->players[i];
+        if (!p->active || !p->alive) continue;
+        double d = hypot(p->x - from->x, p->y - from->y);
+        if (d < bd) { bd = d; best = p; }
+    }
+    return best;
+}
+
+static void update_players(GameState *gs)
+{
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        Tank *p = &gs->players[i];
+        if (!p->active) continue;
+
+        if (p->alive) {
+            Input *in = &p->in;
+            if (in->left)  p->body_angle -= ROT_SPEED;
+            if (in->right) p->body_angle += ROT_SPEED;
+
+            double mv = 0.0;
+            if (in->up)   mv += MOVE_SPEED;
+            if (in->down) mv -= MOVE_SPEED;
+            if (mv != 0.0) {
+                double nx = p->x + cos(p->body_angle) * mv;
+                double ny = p->y + sin(p->body_angle) * mv;
+                if (collision_free(gs, nx, p->y)) p->x = nx;
+                if (collision_free(gs, p->x, ny)) p->y = ny;
+            }
+            p->turret_angle = in->aim;
+
+            if (p->fire_cd > 0) p->fire_cd--;
+            if (in->fire && p->fire_cd == 0) {
+                spawn_bullet(gs, p, i);
+                p->fire_cd = PLAYER_FIRE_CD;
+                p->muzzle = 4;
+            }
+            if (p->muzzle > 0) p->muzzle--;
+        } else {
+            if (p->respawn > 0 && --p->respawn == 0) {
+                p->alive = true; p->hp = 100;
+                p->x = SPAWN_X[i]; p->y = SPAWN_Y[i];
+            }
+        }
+    }
+}
+
+static void update_enemies(GameState *gs)
+{
+    for (int e = 0; e < gs->enemy_count; e++) {
+        Tank *en = &gs->enemies[e];
+        if (en->alive) {
+            Tank *tg = nearest_player(gs, en);
+            if (tg) en->turret_angle = atan2(tg->y - en->y, tg->x - en->x);
+            if (--en->fire_timer <= 0) {
+                if (tg) { spawn_bullet(gs, en, -1); en->muzzle = 4; }
+                en->fire_timer = 70 + rand() % 120;
+            }
+            if (en->muzzle > 0) en->muzzle--;
+        } else {
+            if (en->respawn > 0 && --en->respawn == 0) {
+                init_enemy(en);
+                place_at_open_tile(gs, en);
+            }
+        }
+    }
+}
 
 static void update_bullets(GameState *gs)
 {
@@ -194,28 +301,36 @@ static void update_bullets(GameState *gs)
             b->active = false;
             continue;
         }
-        if (b->from_player) {
+
+        if (b->owner >= 0) {
+            /* bala de jugador: pega a enemigos */
             for (int e = 0; e < gs->enemy_count; e++) {
                 Tank *en = &gs->enemies[e];
                 if (!en->alive) continue;
                 if (hypot(b->x - en->x, b->y - en->y) < TANK_R + BULLET_R) {
                     spawn_blast(gs, en->x, en->y, 1.5);
                     en->alive = false; en->respawn = 150;
-                    gs->score++;
+                    if (b->owner < MAX_PLAYERS && gs->players[b->owner].active)
+                        gs->players[b->owner].score++;
                     b->active = false;
                     break;
                 }
             }
-        } else if (gs->player.alive) {
-            if (hypot(b->x - gs->player.x, b->y - gs->player.y) < TANK_R + BULLET_R) {
-                spawn_blast(gs, gs->player.x, gs->player.y, 1.0);
-                gs->player_hp -= 12;
-                b->active = false;
-                if (gs->player_hp <= 0) {
-                    spawn_blast(gs, gs->player.x, gs->player.y, 2.0);
-                    gs->player_hp = 100;
-                    gs->player.x = PLAYER_START_X;
-                    gs->player.y = PLAYER_START_Y;
+        } else {
+            /* bala de enemigo: pega a jugadores */
+            for (int p = 0; p < MAX_PLAYERS; p++) {
+                Tank *pl = &gs->players[p];
+                if (!pl->active || !pl->alive) continue;
+                if (hypot(b->x - pl->x, b->y - pl->y) < TANK_R + BULLET_R) {
+                    spawn_blast(gs, pl->x, pl->y, 1.0);
+                    pl->hp -= 12;
+                    b->active = false;
+                    if (pl->hp <= 0) {
+                        spawn_blast(gs, pl->x, pl->y, 2.0);
+                        pl->alive = false;
+                        pl->respawn = 120;
+                    }
+                    break;
                 }
             }
         }
@@ -228,7 +343,7 @@ static void update_particles(GameState *gs)
         Particle *p = &gs->particles[i];
         if (!p->active) continue;
         p->x += p->vx; p->y += p->vy;
-        p->vx *= 0.92; p->vy *= 0.92;
+        p->vx *= 0.94; p->vy *= 0.94;
         if (--p->life <= 0) p->active = false;
     }
     for (int i = 0; i < MAX_BLASTS; i++) {
@@ -240,52 +355,10 @@ static void update_particles(GameState *gs)
 
 void game_update(GameState *gs)
 {
-    const double SPEED = 2.6;
-    const double ROT   = 0.05;
-    Tank *p = &gs->player;
-
-    if (gs->key_left)  p->body_angle -= ROT;
-    if (gs->key_right) p->body_angle += ROT;
-
-    double move = 0.0;
-    if (gs->key_up)   move += SPEED;
-    if (gs->key_down) move -= SPEED;
-    if (move != 0.0) {
-        double nx = p->x + cos(p->body_angle) * move;
-        double ny = p->y + sin(p->body_angle) * move;
-        if (collision_free(gs, nx, p->y)) p->x = nx;
-        if (collision_free(gs, p->x, ny)) p->y = ny;
-    }
-
-    p->turret_angle = atan2(gs->mouse_y - p->y, gs->mouse_x - p->x);
-
-    if (gs->player_fire_cd > 0) gs->player_fire_cd--;
-    if ((gs->fire_kb || gs->fire_mouse) && gs->player_fire_cd <= 0) {
-        spawn_bullet(gs, p, true);
-        p->muzzle = 5;
-        gs->player_fire_cd = PLAYER_FIRE_CD;
-    }
-    if (p->muzzle > 0) p->muzzle--;
-
-    for (int i = 0; i < gs->enemy_count; i++) {
-        Tank *e = &gs->enemies[i];
-        if (e->alive) {
-            e->turret_angle = atan2(p->y - e->y, p->x - e->x);
-            if (e->muzzle > 0) e->muzzle--;
-            if (--e->fire_timer <= 0) {
-                spawn_bullet(gs, e, false);
-                e->muzzle = 5;
-                e->fire_timer = 90 + rand() % 90;
-            }
-        } else if (--e->respawn <= 0) {
-            init_enemy(e);
-            place_at_open_tile(gs, e);
-        }
-    }
-
+    update_players(gs);
+    update_enemies(gs);
     update_bullets(gs);
     update_particles(gs);
-
-    gs->shake *= 0.88;
+    if (gs->shake > 0) { gs->shake -= 0.6; if (gs->shake < 0) gs->shake = 0; }
     gs->ticks++;
 }
