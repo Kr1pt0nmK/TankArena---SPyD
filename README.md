@@ -67,7 +67,7 @@ Como una app de Linux habla con una de Windows, el protocolo debe ser independie
 
 ---
 
-## 🚀 Puntos extra (décimas)
+## 🚀 extras
 
 1. **Tolerancia a fallos real:** reconexión automática, persistencia del estado en disco para
    recuperar la partida, y/o **migración de host** (algoritmo Bully) si el host se cae.
@@ -84,32 +84,9 @@ Como una app de Linux habla con una de Windows, el protocolo debe ser independie
 - **Red:** Sockets — Winsock (Windows) / POSIX (Linux), tras una capa con `#ifdef`
 - **Hilos:** Win32 threads (Windows) / `pthreads` (Linux), tras la misma capa
 - **Build:** CMake → se abre en **Visual Studio** (Windows) y compila con `gcc`/`make` (Linux)
-- **Sonido (opcional, no está en el rubro):** [miniaudio](https://miniaud.io) si hay tiempo
 
 > ⚠️ **Setup más latoso:** compilar GTK dentro de Visual Studio (MSVC) en Windows. Rutas que
 > funcionan: **vcpkg** (integra GTK con VS) o **MSYS2/MinGW**. Que una persona lo resuelva el
 > día 1 antes de que todos avancen.
 
 ---
-
-## 📅 Plan de trabajo
-
-| Paso | Qué | Cuándo |
-|---|---|---|
-| 1 | **Setup crítico:** GTK compilando en Windows y Linux + ventana con Glade + capa `#ifdef` | Día 1 |
-| 2 | Base: un tanque que se mueve/gira en el canvas (Cairo) + mapa con colisiones | Día 2 |
-| 3 | ⭐ **Red + protocolo + hilos + mutex:** dos apps (Linux↔Windows) ven los tanques moverse | Días 3–4 |
-| 4 | Combate + **chat general/equipos** + escalar a 4 + desconexión | Días 5–6 |
-| 5 | IA + modos (FFA / 2v2 / vs IA) | Día 7 |
-| 6 | 🎨 Décimas extra: panel didáctico, animaciones, tolerancia a fallos | Resto |
-
-> **Regla de oro:** primero que las dos apps se comuniquen (paso 3); las décimas extra van al final.
-> Lo que se evalúa es el multijugador funcionando.
-
----
-
-## 💯 Evaluación
-
-- Autoevaluación: **33%**
-- Coevaluación (compañeros): **33%**
-- Evaluación del profesor: **34%**
