@@ -25,6 +25,8 @@ struct Server {
     thread_t   sim_thr;
     mutex_t    clock;          /* protege la lista de clientes */
     ClientSlot cl[MAX_PLAYERS];
+    chat_handler on_chat;      /* entrega los chats recibidos a la GUI del host */
+    void        *chat_user;
 };
 
 /* Hilo por cliente: recibe sus INPUT y los vuelca al estado (productor). */
@@ -48,11 +50,18 @@ static void *client_loop(void *arg)
             s->gs->players[id].in = in;
             mutex_unlock(s->glock);
         } else if (type == MSG_CHAT) {
-            /* reenvia el chat a todos (general). El filtrado por equipo va en la rama chat. */
+            /* reenvia el chat a todos los clientes (general). El filtrado por
+               equipo se hara cuando exista el modelo de equipos. */
             mutex_lock(&s->clock);
             for (int i = 0; i < MAX_PLAYERS; i++)
                 if (s->cl[i].used) frame_send(s->cl[i].s, MSG_CHAT, pl, (uint16_t)plen);
             mutex_unlock(&s->clock);
+            /* y lo muestra tambien en la GUI del host */
+            if (s->on_chat) {
+                int sender, channel; char text[CHAT_MAX + 1];
+                dec_chat(pl, plen, &sender, &channel, text, sizeof(text));
+                s->on_chat(sender, channel, text, s->chat_user);
+            }
         }
     }
 
@@ -165,4 +174,30 @@ void server_stop(Server *s)
     thread_join(s->sim_thr);
     mutex_destroy(&s->clock);
     free(s);
+}
+
+void server_set_chat_handler(Server *s, chat_handler cb, void *user)
+{
+    if (!s) return;
+    s->on_chat = cb;
+    s->chat_user = user;
+}
+
+void server_send_chat(Server *s, const char *text)
+{
+    if (!s || !text || !text[0]) return;
+
+    mutex_lock(s->glock);
+    int sender = s->gs->local_id;     /* el jugador local del host */
+    mutex_unlock(s->glock);
+
+    uint8_t pl[3 + CHAT_MAX];
+    int n = enc_chat(pl, sender, CHAT_GENERAL, text);
+
+    mutex_lock(&s->clock);
+    for (int i = 0; i < MAX_PLAYERS; i++)
+        if (s->cl[i].used) frame_send(s->cl[i].s, MSG_CHAT, pl, (uint16_t)n);
+    mutex_unlock(&s->clock);
+
+    if (s->on_chat) s->on_chat(sender, CHAT_GENERAL, text, s->chat_user);
 }

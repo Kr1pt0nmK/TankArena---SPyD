@@ -211,3 +211,37 @@ void dec_state(const uint8_t *p, int plen, GameState *gs)
         bl->t = t; bl->maxt = mt; bl->scale = sc / 10.0;
     }
 }
+
+/* ---------- CHAT ---------- */
+
+int enc_chat(uint8_t *out, int sender, int channel, const char *text)
+{
+    int o = 0;
+    int n = (int)strlen(text);
+    if (n > CHAT_MAX) n = CHAT_MAX;
+    pu8(out, &o, (uint8_t)sender);
+    pu8(out, &o, (uint8_t)channel);
+    pu8(out, &o, (uint8_t)n);
+    memcpy(out + o, text, n);
+    o += n;
+    return o;
+}
+
+int dec_chat(const uint8_t *p, int plen, int *sender, int *channel,
+             char *text, int maxlen)
+{
+    if (maxlen > 0) text[0] = '\0';
+    if (plen < 3 || maxlen < 1) return 0;
+    int o = 0;
+    int s  = gu8(p, &o);
+    int ch = gu8(p, &o);
+    int n  = gu8(p, &o);
+    if (n > plen - 3)   n = plen - 3;    /* no leer fuera del payload */
+    if (n > maxlen - 1) n = maxlen - 1;  /* no desbordar el buffer destino */
+    if (n < 0) n = 0;
+    memcpy(text, p + o, n);
+    text[n] = '\0';
+    if (sender)  *sender  = s;
+    if (channel) *channel = ch;
+    return n;
+}

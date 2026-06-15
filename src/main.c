@@ -19,6 +19,8 @@ typedef struct {
     GameState gs;
     mutex_t   lock;          /* protege gs en host/cliente */
     GtkWidget *canvas;
+    GtkWidget *chat_view;    /* historial de chat (solo lectura) */
+    GtkWidget *chat_entry;   /* caja para escribir */
     Mode      mode;
     int       local_id;
 
@@ -90,9 +92,93 @@ static void set_key(App *a, guint k, gboolean v)
 }
 
 static gboolean on_key_press(GtkWidget *w, GdkEventKey *e, gpointer data)
-{ (void)w; set_key(data, e->keyval, TRUE);  return FALSE; }
+{
+    (void)w;
+    App *a = data;
+    gboolean typing = gtk_widget_has_focus(a->chat_entry);
+
+    /* Enter (fuera del chat): salta a la caja de texto para escribir. */
+    if ((e->keyval == GDK_KEY_Return || e->keyval == GDK_KEY_KP_Enter) && !typing) {
+        gtk_widget_grab_focus(a->chat_entry);
+        return TRUE;
+    }
+    /* Escape (dentro del chat): vuelve al juego sin enviar. */
+    if (e->keyval == GDK_KEY_Escape && typing) {
+        gtk_widget_grab_focus(a->canvas);
+        return TRUE;
+    }
+    /* Mientras escribes, las teclas van a la caja, no al tanque. */
+    if (typing) return FALSE;
+
+    set_key(a, e->keyval, TRUE);
+    return FALSE;
+}
 static gboolean on_key_release(GtkWidget *w, GdkEventKey *e, gpointer data)
-{ (void)w; set_key(data, e->keyval, FALSE); return FALSE; }
+{
+    (void)w;
+    App *a = data;
+    if (gtk_widget_has_focus(a->chat_entry)) return FALSE;
+    set_key(a, e->keyval, FALSE);
+    return FALSE;
+}
+
+/* ---------------- Chat ---------------- */
+
+/* Un mensaje en transito desde el hilo de red hacia la GUI. */
+typedef struct {
+    App  *a;
+    int   sender;
+    char  text[CHAT_MAX + 1];
+} ChatMsg;
+
+/* Corre en el hilo principal de GTK: agrega la linea al historial y hace scroll. */
+static gboolean chat_append_idle(gpointer data)
+{
+    ChatMsg *m = data;
+    App *a = m->a;
+    GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(a->chat_view));
+    GtkTextIter end;
+    char line[CHAT_MAX + 32];
+
+    snprintf(line, sizeof(line), "Jugador %d: %s\n", m->sender, m->text);
+    gtk_text_buffer_get_end_iter(buf, &end);
+    gtk_text_buffer_insert(buf, &end, line, -1);
+
+    /* autoscroll al final */
+    gtk_text_buffer_get_end_iter(buf, &end);
+    GtkTextMark *mk = gtk_text_buffer_create_mark(buf, NULL, &end, FALSE);
+    gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(a->chat_view), mk, 0.0, TRUE, 0.0, 1.0);
+    gtk_text_buffer_delete_mark(buf, mk);
+
+    g_free(m);
+    return G_SOURCE_REMOVE;
+}
+
+/* Lo llama el hilo de red (cliente o host). GTK no es thread-safe, asi que solo
+   empaqueta el mensaje y lo manda al hilo principal con g_idle_add. */
+static void on_chat_received(int sender, int channel, const char *text, void *user)
+{
+    (void)channel;
+    ChatMsg *m = g_malloc(sizeof(*m));
+    m->a = (App *)user;
+    m->sender = sender;
+    snprintf(m->text, sizeof(m->text), "%s", text);
+    g_idle_add(chat_append_idle, m);
+}
+
+/* Enter en la caja de texto: envia el mensaje y devuelve el foco al juego. */
+static void on_chat_send(GtkEntry *entry, gpointer data)
+{
+    App *a = data;
+    const char *txt = gtk_entry_get_text(entry);
+    if (txt && txt[0]) {
+        if (a->mode == MODE_HOST)        server_send_chat(a->server, txt);
+        else if (a->mode == MODE_CLIENT) client_send_chat(a->client, txt);
+        else /* SOLO */                  on_chat_received(a->local_id, CHAT_GENERAL, txt, a);
+    }
+    gtk_entry_set_text(entry, "");
+    gtk_widget_grab_focus(a->canvas);   /* vuelve al juego */
+}
 
 static gboolean on_tick(gpointer data)
 {
@@ -190,11 +276,18 @@ int main(int argc, char **argv)
     GtkBuilder *b = gtk_builder_new_from_file(UI_FILE);
     GtkWidget *win = GTK_WIDGET(gtk_builder_get_object(b, "main_window"));
     app.canvas     = GTK_WIDGET(gtk_builder_get_object(b, "canvas"));
+    app.chat_view  = GTK_WIDGET(gtk_builder_get_object(b, "chat_view"));
+    app.chat_entry = GTK_WIDGET(gtk_builder_get_object(b, "chat_entry"));
 
     const char *title = app.mode == MODE_HOST   ? "Tank Arena — HOST"
                       : app.mode == MODE_CLIENT ? "Tank Arena — CLIENTE"
                                                 : "Tank Arena — Local";
     gtk_window_set_title(GTK_WINDOW(win), title);
+
+    /* Conecta el chat a la red segun el modo. */
+    g_signal_connect(app.chat_entry, "activate", G_CALLBACK(on_chat_send), &app);
+    if (app.mode == MODE_HOST)        server_set_chat_handler(app.server, on_chat_received, &app);
+    else if (app.mode == MODE_CLIENT) client_set_chat_handler(app.client, on_chat_received, &app);
 
     gtk_widget_add_events(app.canvas, GDK_POINTER_MOTION_MASK |
                                       GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK);
@@ -207,6 +300,7 @@ int main(int argc, char **argv)
     g_signal_connect(win, "destroy",           G_CALLBACK(gtk_main_quit),  NULL);
 
     gtk_widget_show_all(win);
+    gtk_widget_grab_focus(app.canvas);   /* arranca con el foco en el juego */
     g_timeout_add(16, on_tick, &app);
     gtk_main();
 
