@@ -5,6 +5,9 @@
    pthreads, y CRITICAL_SECTION vs pthread_mutex_t, tras una sola interfaz. */
 
 #ifdef _WIN32
+  /* Evita que windows.h incluya el winsock.h antiguo: net.h usa winsock2.h y
+     ambos chocan si se mezclan. Asi el orden de los #include deja de importar. */
+  #define WIN32_LEAN_AND_MEAN
   #include <windows.h>
   typedef HANDLE            thread_t;
   typedef CRITICAL_SECTION  mutex_t;
