@@ -124,6 +124,14 @@ static gboolean on_key_release(GtkWidget *w, GdkEventKey *e, gpointer data)
 
 /* ---------------- Chat ---------------- */
 
+/* Color de cada jugador en el chat: igual que el de su tanque (ver game.c). */
+static const char *PLAYER_HEX[MAX_PLAYERS] = {
+    "#2EC4B5",  /* cian     (jugador 0) */
+    "#F5C740",  /* amarillo (jugador 1) */
+    "#A873F2",  /* morado   (jugador 2) */
+    "#66D966",  /* verde    (jugador 3) */
+};
+
 /* Un mensaje en transito desde el hilo de red hacia la GUI. */
 typedef struct {
     App  *a;
@@ -136,22 +144,74 @@ static gboolean chat_append_idle(gpointer data)
 {
     ChatMsg *m = data;
     App *a = m->a;
-    GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(a->chat_view));
+    GtkTextView   *view = GTK_TEXT_VIEW(a->chat_view);
+    GtkTextBuffer *buf  = gtk_text_view_get_buffer(view);
+    GtkTextTagTable *tab = gtk_text_buffer_get_tag_table(buf);
     GtkTextIter end;
-    char line[CHAT_MAX + 32];
 
-    snprintf(line, sizeof(line), "Jugador %d: %s\n", m->sender, m->text);
+    /* Etiqueta de color por jugador (se crea una sola vez y se reutiliza). */
+    int k = m->sender & 3;
+    char tagname[8];
+    snprintf(tagname, sizeof(tagname), "p%d", k);
+    GtkTextTag *nametag = gtk_text_tag_table_lookup(tab, tagname);
+    if (!nametag)
+        nametag = gtk_text_buffer_create_tag(buf, tagname,
+                      "foreground", PLAYER_HEX[k],
+                      "weight", PANGO_WEIGHT_BOLD, NULL);
+
+    /* "Tu" si es mi propio mensaje; si no, "Jugador N". */
+    char name[24];
+    if (m->sender == a->local_id) snprintf(name, sizeof(name), "Tu");
+    else                          snprintf(name, sizeof(name), "Jugador %d", m->sender);
+
+    /* nombre en color + ":" + mensaje en texto normal + salto de linea */
     gtk_text_buffer_get_end_iter(buf, &end);
-    gtk_text_buffer_insert(buf, &end, line, -1);
+    gtk_text_buffer_insert_with_tags(buf, &end, name, -1, nametag, NULL);
+    gtk_text_buffer_get_end_iter(buf, &end);
+    gtk_text_buffer_insert(buf, &end, ":  ", -1);
+    gtk_text_buffer_get_end_iter(buf, &end);
+    gtk_text_buffer_insert(buf, &end, m->text, -1);
+    gtk_text_buffer_get_end_iter(buf, &end);
+    gtk_text_buffer_insert(buf, &end, "\n", -1);
 
     /* autoscroll al final */
     gtk_text_buffer_get_end_iter(buf, &end);
     GtkTextMark *mk = gtk_text_buffer_create_mark(buf, NULL, &end, FALSE);
-    gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(a->chat_view), mk, 0.0, TRUE, 0.0, 1.0);
+    gtk_text_view_scroll_to_mark(view, mk, 0.0, TRUE, 0.0, 1.0);
     gtk_text_buffer_delete_mark(buf, mk);
 
     g_free(m);
     return G_SOURCE_REMOVE;
+}
+
+/* Estilo oscuro del panel de chat (tema visual con CSS). */
+static void apply_chat_style(App *a)
+{
+    GtkCssProvider *css = gtk_css_provider_new();
+    gtk_css_provider_load_from_data(css,
+        ".chat-view, .chat-view text {"
+        "  background-color: #1b1f24;"
+        "  color: #dfe3e8;"
+        "  font-family: 'Segoe UI','Cantarell',sans-serif;"
+        "  font-size: 11pt;"
+        "  padding: 6px;"
+        "}"
+        ".chat-entry {"
+        "  background-color: #11151a;"
+        "  color: #ffffff;"
+        "  caret-color: #ffffff;"
+        "  border: 1px solid #323a44;"
+        "  padding: 7px;"
+        "  font-size: 11pt;"
+        "}"
+        ".chat-entry:focus { border: 1px solid #2EC4B5; }",
+        -1, NULL);
+
+    gtk_style_context_add_class(gtk_widget_get_style_context(a->chat_view),  "chat-view");
+    gtk_style_context_add_class(gtk_widget_get_style_context(a->chat_entry), "chat-entry");
+    gtk_style_context_add_provider_for_screen(gtk_widget_get_screen(a->chat_view),
+        GTK_STYLE_PROVIDER(css), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    g_object_unref(css);
 }
 
 /* Lo llama el hilo de red (cliente o host). GTK no es thread-safe, asi que solo
@@ -283,6 +343,9 @@ int main(int argc, char **argv)
                       : app.mode == MODE_CLIENT ? "Tank Arena — CLIENTE"
                                                 : "Tank Arena — Local";
     gtk_window_set_title(GTK_WINDOW(win), title);
+
+    /* Estilo visual del chat. */
+    apply_chat_style(&app);
 
     /* Conecta el chat a la red segun el modo. */
     g_signal_connect(app.chat_entry, "activate", G_CALLBACK(on_chat_send), &app);
