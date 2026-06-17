@@ -33,20 +33,13 @@ static void draw_background(cairo_t *cr)
     cairo_pattern_add_color_stop_rgb(g, 0.0, 0.05, 0.10, 0.16);
     cairo_pattern_add_color_stop_rgb(g, 1.0, 0.10, 0.15, 0.23);
     cairo_set_source(cr, g);
-    cairo_rectangle(cr, -14, -14, VIEW_W + 28, VIEW_H + 28);
-    cairo_fill(cr);
+    cairo_paint(cr);
     cairo_pattern_destroy(g);
 
     cairo_set_source_rgba(cr, 1, 1, 1, 0.04);
     cairo_set_line_width(cr, 1.0);
-    for (int x = 0; x <= MAP_W; x++) {
-        cairo_move_to(cr, x * TILE, 0);
-        cairo_line_to(cr, x * TILE, VIEW_H);
-    }
-    for (int y = 0; y <= MAP_H; y++) {
-        cairo_move_to(cr, 0, y * TILE);
-        cairo_line_to(cr, VIEW_W, y * TILE);
-    }
+    for (int x = 0; x <= MAP_W; x++) { cairo_move_to(cr, x * TILE, 0); cairo_line_to(cr, x * TILE, VIEW_H); }
+    for (int y = 0; y <= MAP_H; y++) { cairo_move_to(cr, 0, y * TILE); cairo_line_to(cr, VIEW_W, y * TILE); }
     cairo_stroke(cr);
 }
 
@@ -55,8 +48,7 @@ static void draw_walls(cairo_t *cr, const GameState *gs)
     for (int ty = 0; ty < MAP_H; ty++) {
         for (int tx = 0; tx < MAP_W; tx++) {
             if (gs->map[ty * MAP_W + tx] != 1) continue;
-            double x = tx * TILE + 2, y = ty * TILE + 2;
-            double w = TILE - 4, h = TILE - 4;
+            double x = tx * TILE + 2, y = ty * TILE + 2, w = TILE - 4, h = TILE - 4;
 
             cairo_pattern_t *g = cairo_pattern_create_linear(x, y, x, y + h);
             cairo_pattern_add_color_stop_rgb(g, 0.0, 0.88, 0.48, 0.25);
@@ -79,9 +71,9 @@ static void draw_walls(cairo_t *cr, const GameState *gs)
     }
 }
 
-static void draw_tank(cairo_t *cr, const Tank *t)
+static void draw_tank(cairo_t *cr, const Tank *t, bool is_local)
 {
-    if (!t->alive) return;
+    if (!t->active || !t->alive) return;
 
     cairo_pattern_t *glow =
         cairo_pattern_create_radial(t->x, t->y, 2, t->x, t->y, 30);
@@ -101,8 +93,10 @@ static void draw_tank(cairo_t *cr, const Tank *t)
     rounded_rect(cr, -16,   9, 32, 8, 2); cairo_fill(cr);
 
     cairo_pattern_t *body = cairo_pattern_create_linear(0, -11, 0, 11);
-    double hr = t->cr * 1.15, hg = t->cg * 1.15, hb = t->cb * 1.15;
-    cairo_pattern_add_color_stop_rgb(body, 0.0, hr > 1 ? 1 : hr, hg > 1 ? 1 : hg, hb > 1 ? 1 : hb);
+    double hr = t->cr * 1.15 > 1 ? 1 : t->cr * 1.15;
+    double hg = t->cg * 1.15 > 1 ? 1 : t->cg * 1.15;
+    double hb = t->cb * 1.15 > 1 ? 1 : t->cb * 1.15;
+    cairo_pattern_add_color_stop_rgb(body, 0.0, hr, hg, hb);
     cairo_pattern_add_color_stop_rgb(body, 1.0, t->cr * 0.7, t->cg * 0.7, t->cb * 0.7);
     rounded_rect(cr, -15, -11, 30, 22, 5);
     cairo_set_source(cr, body);
@@ -113,33 +107,34 @@ static void draw_tank(cairo_t *cr, const Tank *t)
     cairo_stroke(cr);
     cairo_restore(cr);
 
-    /* torreta + canon + fogonazo */
+    /* torreta + canon */
     cairo_save(cr);
     cairo_translate(cr, t->x, t->y);
     cairo_rotate(cr, t->turret_angle);
-
     cairo_set_source_rgb(cr, 0.17, 0.18, 0.26);
     rounded_rect(cr, 0, -3.5, 28, 7, 2);
     cairo_fill(cr);
-
-    if (t->muzzle > 0) {
-        double f = t->muzzle / 5.0;
-        cairo_pattern_t *m = cairo_pattern_create_radial(30, 0, 0, 30, 0, 12 * f + 4);
-        cairo_pattern_add_color_stop_rgba(m, 0.0, 1.0, 0.95, 0.6, 0.95);
-        cairo_pattern_add_color_stop_rgba(m, 1.0, 1.0, 0.5, 0.1, 0.0);
-        cairo_set_source(cr, m);
-        cairo_arc(cr, 30, 0, 12 * f + 4, 0, 2 * M_PI);
-        cairo_fill(cr);
-        cairo_pattern_destroy(m);
-    }
-
     cairo_set_source_rgb(cr, t->cr * 0.75, t->cg * 0.75, t->cb * 0.75);
     cairo_arc(cr, 0, 0, 9, 0, 2 * M_PI);
     cairo_fill_preserve(cr);
     cairo_set_source_rgba(cr, 1, 1, 1, 0.25);
     cairo_set_line_width(cr, 1.5);
     cairo_stroke(cr);
+
+    if (t->muzzle > 0) {
+        cairo_set_source_rgba(cr, 1.0, 0.9, 0.4, 0.9);
+        cairo_arc(cr, 30, 0, 5, 0, 2 * M_PI);
+        cairo_fill(cr);
+    }
     cairo_restore(cr);
+
+    /* anillo para el jugador local */
+    if (is_local) {
+        cairo_set_source_rgba(cr, 1, 1, 1, 0.8);
+        cairo_set_line_width(cr, 2.0);
+        cairo_arc(cr, t->x, t->y, 21, 0, 2 * M_PI);
+        cairo_stroke(cr);
+    }
 }
 
 static void draw_bullets(cairo_t *cr, const GameState *gs)
@@ -147,28 +142,20 @@ static void draw_bullets(cairo_t *cr, const GameState *gs)
     for (int i = 0; i < MAX_BULLETS; i++) {
         const Bullet *b = &gs->bullets[i];
         if (!b->active) continue;
-        double r = b->from_player ? 0.55 : 1.0;
-        double g = b->from_player ? 0.95 : 0.55;
-        double bl = b->from_player ? 1.0  : 0.25;
+        double r, g, bl;
+        if (b->owner >= 0) { r = 0.4; g = 0.9; bl = 1.0; }   /* jugador: cian */
+        else               { r = 1.0; g = 0.6; bl = 0.2; }   /* enemigo: naranja */
 
-        /* estela */
-        cairo_set_source_rgba(cr, r, g, bl, 0.35);
-        cairo_set_line_width(cr, 3.0);
-        cairo_move_to(cr, b->x - b->vx * 2.5, b->y - b->vy * 2.5);
-        cairo_line_to(cr, b->x, b->y);
-        cairo_stroke(cr);
-
-        /* glow + nucleo */
-        cairo_pattern_t *gl = cairo_pattern_create_radial(b->x, b->y, 0, b->x, b->y, 9);
+        cairo_pattern_t *gl = cairo_pattern_create_radial(b->x, b->y, 0, b->x, b->y, 8);
         cairo_pattern_add_color_stop_rgba(gl, 0.0, r, g, bl, 0.9);
         cairo_pattern_add_color_stop_rgba(gl, 1.0, r, g, bl, 0.0);
         cairo_set_source(cr, gl);
-        cairo_arc(cr, b->x, b->y, 9, 0, 2 * M_PI);
+        cairo_arc(cr, b->x, b->y, 8, 0, 2 * M_PI);
         cairo_fill(cr);
         cairo_pattern_destroy(gl);
 
         cairo_set_source_rgb(cr, 1, 1, 1);
-        cairo_arc(cr, b->x, b->y, BULLET_R - 1.5, 0, 2 * M_PI);
+        cairo_arc(cr, b->x, b->y, 2.5, 0, 2 * M_PI);
         cairo_fill(cr);
     }
 }
@@ -180,7 +167,7 @@ static void draw_particles(cairo_t *cr, const GameState *gs)
         if (!p->active) continue;
         double a = p->life / p->maxlife;
         cairo_set_source_rgba(cr, p->r, p->g, p->b, a);
-        cairo_arc(cr, p->x, p->y, p->size, 0, 2 * M_PI);
+        cairo_arc(cr, p->x, p->y, p->size * a, 0, 2 * M_PI);
         cairo_fill(cr);
     }
 }
@@ -190,24 +177,12 @@ static void draw_blasts(cairo_t *cr, const GameState *gs)
     for (int i = 0; i < MAX_BLASTS; i++) {
         const Blast *bl = &gs->blasts[i];
         if (!bl->active) continue;
-        double f = bl->t / bl->maxt;          /* 0..1 */
-        double rad = (8 + f * 38) * bl->scale;
-
-        cairo_set_source_rgba(cr, 1.0, 0.7, 0.3, (1 - f) * 0.8);
-        cairo_set_line_width(cr, 4.0 * (1 - f) + 1);
+        double a = bl->t / bl->maxt;
+        double rad = (8 + a * 34) * bl->scale;
+        cairo_set_source_rgba(cr, 1.0, 0.7 - a * 0.5, 0.2, (1.0 - a) * 0.8);
+        cairo_set_line_width(cr, 3.0 * (1.0 - a) + 0.5);
         cairo_arc(cr, bl->x, bl->y, rad, 0, 2 * M_PI);
         cairo_stroke(cr);
-
-        if (f < 0.4) {
-            cairo_pattern_t *fl =
-                cairo_pattern_create_radial(bl->x, bl->y, 0, bl->x, bl->y, 18 * bl->scale);
-            cairo_pattern_add_color_stop_rgba(fl, 0.0, 1, 1, 0.8, (0.4 - f) * 2.0);
-            cairo_pattern_add_color_stop_rgba(fl, 1.0, 1, 0.5, 0.1, 0.0);
-            cairo_set_source(cr, fl);
-            cairo_arc(cr, bl->x, bl->y, 18 * bl->scale, 0, 2 * M_PI);
-            cairo_fill(cr);
-            cairo_pattern_destroy(fl);
-        }
     }
 }
 
@@ -219,66 +194,75 @@ static void draw_vignette(cairo_t *cr)
     cairo_pattern_add_color_stop_rgba(v, 0.0, 0, 0, 0, 0.0);
     cairo_pattern_add_color_stop_rgba(v, 1.0, 0, 0, 0, 0.40);
     cairo_set_source(cr, v);
-    cairo_rectangle(cr, -14, -14, VIEW_W + 28, VIEW_H + 28);
-    cairo_fill(cr);
+    cairo_paint(cr);
     cairo_pattern_destroy(v);
 }
 
-static void draw_hud(const GameState *gs, cairo_t *cr)
+static void draw_hud(cairo_t *cr, const GameState *gs)
 {
     cairo_set_source_rgba(cr, 0, 0, 0, 0.6);
     text_at(cr, 20, 38, "TANK ARENA", 28, CAIRO_FONT_WEIGHT_BOLD);
     cairo_set_source_rgb(cr, 0.96, 0.83, 0.37);
     text_at(cr, 18, 36, "TANK ARENA", 28, CAIRO_FONT_WEIGHT_BOLD);
 
-    cairo_set_source_rgba(cr, 1, 1, 1, 0.7);
-    text_at(cr, 19, 56, "avance v0.2  ·  GTK 3 + Cairo", 12, CAIRO_FONT_WEIGHT_NORMAL);
+    /* datos del jugador local */
+    const Tank *me = NULL;
+    if (gs->local_id >= 0 && gs->local_id < MAX_PLAYERS && gs->players[gs->local_id].active)
+        me = &gs->players[gs->local_id];
 
-    /* barra de blindaje (arriba a la derecha) */
-    double bx = VIEW_W - 196, by = 24, bw = 176, bh = 16;
-    double hp = gs->player_hp / 100.0;
-    if (hp < 0) hp = 0;
+    if (me) {
+        double hp = me->hp < 0 ? 0 : me->hp;
+        cairo_set_source_rgb(cr, 0.96, 0.83, 0.37);
+        text_at(cr, VIEW_W - 165, 28, "BLINDAJE", 13, CAIRO_FONT_WEIGHT_BOLD);
+        cairo_set_source_rgba(cr, 0, 0, 0, 0.5);
+        rounded_rect(cr, VIEW_W - 165, 34, 145, 14, 3); cairo_fill(cr);
+        double frac = hp / 100.0;
+        cairo_set_source_rgb(cr, 1.0 - frac * 0.7, 0.3 + frac * 0.5, 0.3);
+        rounded_rect(cr, VIEW_W - 165, 34, 145 * frac, 14, 3); cairo_fill(cr);
+
+        char buf[64];
+        snprintf(buf, sizeof(buf), "Bajas: %d", me->score);
+        cairo_set_source_rgb(cr, 0.96, 0.83, 0.37);
+        text_at(cr, VIEW_W - 165, 66, buf, 16, CAIRO_FONT_WEIGHT_BOLD);
+    }
+
+    /* numero de jugadores conectados */
+    int np = 0;
+    for (int i = 0; i < MAX_PLAYERS; i++) if (gs->players[i].active) np++;
+    char pbuf[48];
+    snprintf(pbuf, sizeof(pbuf), "Jugadores: %d", np);
     cairo_set_source_rgba(cr, 1, 1, 1, 0.8);
-    text_at(cr, bx, by - 6, "BLINDAJE", 11, CAIRO_FONT_WEIGHT_BOLD);
-    cairo_set_source_rgba(cr, 0, 0, 0, 0.5);
-    rounded_rect(cr, bx, by, bw, bh, 4); cairo_fill(cr);
-    cairo_set_source_rgb(cr, 0.95 - hp * 0.7, 0.25 + hp * 0.55, 0.30);
-    rounded_rect(cr, bx + 2, by + 2, (bw - 4) * hp, bh - 4, 3); cairo_fill(cr);
-
-    char buf[64];
-    snprintf(buf, sizeof buf, "Bajas: %d", gs->score);
-    cairo_set_source_rgb(cr, 0.96, 0.83, 0.37);
-    text_at(cr, bx, by + bh + 18, buf, 15, CAIRO_FONT_WEIGHT_BOLD);
+    text_at(cr, 19, 56, pbuf, 13, CAIRO_FONT_WEIGHT_NORMAL);
 
     cairo_set_source_rgba(cr, 0, 0, 0, 0.55);
     cairo_rectangle(cr, 0, VIEW_H - 34, VIEW_W, 34);
     cairo_fill(cr);
     cairo_set_source_rgba(cr, 1, 1, 1, 0.85);
     text_at(cr, 16, VIEW_H - 12,
-            "WASD / Flechas: mover    ·    Raton: apuntar    ·    Click / Espacio: disparar",
+            "WASD / Flechas: mover      ·      Raton: apuntar      ·      Click / Espacio: disparar",
             14, CAIRO_FONT_WEIGHT_NORMAL);
 }
 
 void render_scene(const GameState *gs, cairo_t *cr)
 {
-    /* screen shake (no afecta al HUD) */
-    cairo_save(cr);
-    if (gs->shake > 0.2) {
-        double sx = (((double)rand() / RAND_MAX) - 0.5) * gs->shake * 2.0;
-        double sy = (((double)rand() / RAND_MAX) - 0.5) * gs->shake * 2.0;
-        cairo_translate(cr, sx, sy);
+    /* screen shake */
+    double ox = 0, oy = 0;
+    if (gs->shake > 0) {
+        ox = (rand() / (double)RAND_MAX - 0.5) * gs->shake;
+        oy = (rand() / (double)RAND_MAX - 0.5) * gs->shake;
     }
+    cairo_save(cr);
+    cairo_translate(cr, ox, oy);
 
     draw_background(cr);
     draw_walls(cr, gs);
-    for (int i = 0; i < gs->enemy_count; i++)
-        draw_tank(cr, &gs->enemies[i]);
-    draw_tank(cr, &gs->player);
+    for (int e = 0; e < gs->enemy_count; e++) draw_tank(cr, &gs->enemies[e], false);
+    for (int i = 0; i < MAX_PLAYERS; i++) draw_tank(cr, &gs->players[i], i == gs->local_id);
     draw_bullets(cr, gs);
     draw_particles(cr, gs);
     draw_blasts(cr, gs);
     draw_vignette(cr);
-
     cairo_restore(cr);
-    draw_hud(gs, cr);
+
+    draw_hud(cr, gs);
 }
