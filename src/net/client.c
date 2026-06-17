@@ -12,6 +12,8 @@ struct Client {
     int        local_id;
     volatile int alive;
     thread_t   thr;
+    chat_handler on_chat;    /* entrega los chats recibidos a la GUI */
+    void        *chat_user;
 };
 
 /* Hilo de red: recibe STATE y reconstruye el estado (productor). */
@@ -30,8 +32,13 @@ static void *recv_loop(void *arg)
             mutex_lock(c->lock);
             dec_state(pl, plen, c->gs);
             mutex_unlock(c->lock);
+        } else if (type == MSG_CHAT) {
+            if (c->on_chat) {
+                int sender, channel; char text[CHAT_MAX + 1];
+                dec_chat(pl, plen, &sender, &channel, text, sizeof(text));
+                c->on_chat(sender, channel, text, c->chat_user);
+            }
         }
-        /* MSG_CHAT: pendiente para la rama chat */
     }
     c->alive = 0;
     fprintf(stderr, "[cliente] conexion con el host terminada\n");
@@ -76,6 +83,25 @@ int client_send_input(Client *c, const Input *in)
         return -1;
     }
     return 0;
+}
+
+int client_send_chat(Client *c, const char *text)
+{
+    if (!c || !c->alive || !text || !text[0]) return -1;
+    uint8_t pl[3 + CHAT_MAX];
+    int n = enc_chat(pl, c->local_id, CHAT_GENERAL, text);
+    if (frame_send(c->s, MSG_CHAT, pl, (uint16_t)n) != 0) {
+        c->alive = 0;
+        return -1;
+    }
+    return 0;
+}
+
+void client_set_chat_handler(Client *c, chat_handler cb, void *user)
+{
+    if (!c) return;
+    c->on_chat = cb;
+    c->chat_user = user;
 }
 
 int client_alive(Client *c) { return c && c->alive; }

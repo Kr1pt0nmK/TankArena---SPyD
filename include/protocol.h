@@ -45,4 +45,21 @@ void dec_input(const uint8_t *p, int plen, Input *in);
 int  enc_state(uint8_t *out, const GameState *gs);
 void dec_state(const uint8_t *p, int plen, GameState *gs);
 
+/* ---------- CHAT ---------- */
+#define CHAT_MAX 200                       /* maximo de bytes de texto por mensaje */
+enum { CHAT_GENERAL = 0, CHAT_TEAM = 1 };  /* canales (TEAM queda para mas adelante) */
+
+/* Serializa un chat. Formato: [u8 emisor][u8 canal][u8 len][texto de len bytes].
+   Devuelve la longitud del payload. */
+int  enc_chat(uint8_t *out, int sender, int channel, const char *text);
+
+/* Lee un chat. Copia el texto (terminado en '\0') en text, hasta maxlen-1 bytes.
+   Devuelve la longitud del texto (0 si el frame es invalido). */
+int  dec_chat(const uint8_t *p, int plen, int *sender, int *channel,
+              char *text, int maxlen);
+
+/* Callback que entrega a la GUI un chat recibido. OJO: lo invoca el hilo de red,
+   asi que no debe tocar GTK directamente (debe marshalear con g_idle_add). */
+typedef void (*chat_handler)(int sender, int channel, const char *text, void *user);
+
 #endif /* PROTOCOL_H */
