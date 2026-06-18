@@ -20,6 +20,7 @@ struct Server {
     GameState *gs;
     mutex_t   *glock;          /* protege gs */
     sock_t     listen;
+    uint16_t   port;
     volatile int running;
     thread_t   accept_thr;
     thread_t   sim_thr;
@@ -147,7 +148,7 @@ Server *server_start(GameState *gs, mutex_t *lock, uint16_t port)
 {
     Server *s = (Server *)calloc(1, sizeof(*s));
     if (!s) return NULL;
-    s->gs = gs; s->glock = lock; s->running = 1;
+    s->gs = gs; s->glock = lock; s->port = port; s->running = 1;
     mutex_init(&s->clock);
 
     s->listen = net_listen(port);
@@ -163,7 +164,14 @@ void server_stop(Server *s)
 {
     if (!s) return;
     s->running = 0;
-    net_close(s->listen);              /* desbloquea accept */
+
+    /* Despierta el hilo de accept: en Linux, cerrar el socket de escucha no
+       siempre desbloquea un accept() en curso. Abrimos una conexion ficticia a
+       nosotros mismos para que accept() retorne y el hilo vea running == 0.
+       (En Windows closesocket si lo desbloquea, pero esto funciona en ambos.) */
+    sock_t waker = net_connect("127.0.0.1", s->port);
+    if (waker != SOCK_INVALID) net_close(waker);
+    net_close(s->listen);
 
     mutex_lock(&s->clock);
     for (int i = 0; i < MAX_PLAYERS; i++)

@@ -68,6 +68,7 @@ static gboolean on_button_press(GtkWidget *w, GdkEventButton *e, gpointer data)
 {
     (void)w;
     App *a = data;
+    gtk_widget_grab_focus(a->canvas);   /* clic en el juego = recupera el control del tanque */
     a->mouse_x = e->x; a->mouse_y = e->y; a->fmouse = TRUE;
     return FALSE;
 }
@@ -91,6 +92,13 @@ static void set_key(App *a, guint k, gboolean v)
     }
 }
 
+/* Suelta todas las teclas (evita que el tanque se quede girando al cambiar de
+   foco o de ventana con una tecla apretada). */
+static void clear_keys(App *a)
+{
+    a->kup = a->kdown = a->kleft = a->kright = a->fkb = a->fmouse = FALSE;
+}
+
 static gboolean on_key_press(GtkWidget *w, GdkEventKey *e, gpointer data)
 {
     (void)w;
@@ -99,6 +107,7 @@ static gboolean on_key_press(GtkWidget *w, GdkEventKey *e, gpointer data)
 
     /* Enter (fuera del chat): salta a la caja de texto para escribir. */
     if ((e->keyval == GDK_KEY_Return || e->keyval == GDK_KEY_KP_Enter) && !typing) {
+        clear_keys(a);                      /* suelta todo al entrar al chat */
         gtk_widget_grab_focus(a->chat_entry);
         return TRUE;
     }
@@ -107,6 +116,9 @@ static gboolean on_key_press(GtkWidget *w, GdkEventKey *e, gpointer data)
         gtk_widget_grab_focus(a->canvas);
         return TRUE;
     }
+    /* Tab no debe pasar el foco al chat mientras juegas (si no, WASD se escribe). */
+    if (!typing && (e->keyval == GDK_KEY_Tab || e->keyval == GDK_KEY_ISO_Left_Tab))
+        return TRUE;
     /* Mientras escribes, las teclas van a la caja, no al tanque. */
     if (typing) return FALSE;
 
@@ -116,9 +128,17 @@ static gboolean on_key_press(GtkWidget *w, GdkEventKey *e, gpointer data)
 static gboolean on_key_release(GtkWidget *w, GdkEventKey *e, gpointer data)
 {
     (void)w;
-    App *a = data;
-    if (gtk_widget_has_focus(a->chat_entry)) return FALSE;
-    set_key(a, e->keyval, FALSE);
+    /* Procesamos SIEMPRE el soltar tecla: si lo ignoramos cuando el chat tiene el
+       foco, se pierde el release y el tanque se queda girando. */
+    set_key(data, e->keyval, FALSE);
+    return FALSE;
+}
+
+/* La ventana pierde el foco (p.ej. Alt-Tab): suelta las teclas para no quedar girando. */
+static gboolean on_focus_out(GtkWidget *w, GdkEventFocus *e, gpointer data)
+{
+    (void)w; (void)e;
+    clear_keys((App *)data);
     return FALSE;
 }
 
@@ -360,6 +380,7 @@ int main(int argc, char **argv)
     g_signal_connect(app.canvas, "button-release-event", G_CALLBACK(on_button_release), &app);
     g_signal_connect(win, "key-press-event",   G_CALLBACK(on_key_press),   &app);
     g_signal_connect(win, "key-release-event", G_CALLBACK(on_key_release), &app);
+    g_signal_connect(win, "focus-out-event",   G_CALLBACK(on_focus_out),   &app);
     g_signal_connect(win, "destroy",           G_CALLBACK(gtk_main_quit),  NULL);
 
     gtk_widget_show_all(win);
