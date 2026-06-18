@@ -316,6 +316,27 @@ static void update_bullets(GameState *gs)
                     break;
                 }
             }
+            /* PvP (todos contra todos): tambien pega a otros jugadores. */
+            if (b->active) {
+                for (int p = 0; p < MAX_PLAYERS; p++) {
+                    if (p == b->owner) continue;        /* no te dañas a ti mismo */
+                    Tank *pl = &gs->players[p];
+                    if (!pl->active || !pl->alive) continue;
+                    if (hypot(b->x - pl->x, b->y - pl->y) < TANK_R + BULLET_R) {
+                        spawn_blast(gs, pl->x, pl->y, 1.0);
+                        pl->hp -= 12;
+                        b->active = false;
+                        if (pl->hp <= 0) {
+                            spawn_blast(gs, pl->x, pl->y, 2.0);
+                            pl->alive = false;
+                            pl->respawn = 120;
+                            if (b->owner < MAX_PLAYERS && gs->players[b->owner].active)
+                                gs->players[b->owner].score++;   /* baja por matar a otro jugador */
+                        }
+                        break;
+                    }
+                }
+            }
         } else {
             /* bala de enemigo: pega a jugadores */
             for (int p = 0; p < MAX_PLAYERS; p++) {
