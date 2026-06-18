@@ -29,6 +29,8 @@ typedef struct {
 
     Server   *server;        /* host */
     Client   *client;        /* cliente */
+    uint16_t  port;          /* puerto (para reconectar/migrar) */
+    gboolean  lost;          /* true si se perdio la partida sin poder migrar */
 } App;
 
 /* Construye el input local a partir de teclado + raton. */
@@ -260,6 +262,69 @@ static void on_chat_send(GtkEntry *entry, gpointer data)
     gtk_widget_grab_focus(a->canvas);   /* vuelve al juego */
 }
 
+/* ---------------- Migracion de host (tolerancia a fallos) ----------------
+   Si el host cae, el cliente elige al superviviente con el id mas bajo como
+   nuevo host. Ese levanta un servidor; los demas se reconectan a su IP. */
+static void do_migration(App *a)
+{
+    if (a->lost) return;
+
+    PeerInfo peers[MAX_PLAYERS];
+    int np   = client_get_peers(a->client, peers, MAX_PLAYERS);
+    int myid = client_id(a->client);
+
+    client_close(a->client);    /* cerramos el cliente caido */
+    a->client = NULL;
+
+    if (np == 0) {
+        a->lost = TRUE;
+        fprintf(stderr, "[migracion] sin lista de peers; no se puede continuar\n");
+        return;
+    }
+
+    /* eleccion: gana el id superviviente mas bajo */
+    int new_host = 9999;
+    char host_ip[IP_MAX] = "";
+    for (int i = 0; i < np; i++)
+        if (peers[i].id < new_host) {
+            new_host = peers[i].id;
+            snprintf(host_ip, IP_MAX, "%s", peers[i].ip);
+        }
+
+    fprintf(stderr, "[migracion] host caido -> nuevo host = jugador %d (yo soy %d)\n",
+            new_host, myid);
+
+    if (myid == new_host) {
+        /* Soy el nuevo host: conservo mi tanque, suelto a los demas (reconectaran)
+           y levanto el servidor en el mismo puerto. */
+        mutex_lock(&a->lock);
+        for (int i = 0; i < MAX_PLAYERS; i++)
+            if (i != myid) game_remove_player(&a->gs, i);
+        a->gs.local_id = myid;
+        mutex_unlock(&a->lock);
+
+        a->local_id = myid;
+        a->mode = MODE_HOST;
+        a->server = server_start(&a->gs, &a->lock, a->port);
+        if (!a->server) { a->lost = TRUE; fprintf(stderr, "[migracion] no pude hospedar\n"); return; }
+        server_set_chat_handler(a->server, on_chat_received, a);
+        fprintf(stderr, "[migracion] ahora soy el HOST\n");
+    } else {
+        /* Me reconecto al nuevo host (reintentos: tarda un momento en levantar). */
+        Client *nc = NULL;
+        for (int t = 0; t < 30 && !nc; t++) {
+            nc = client_connect(host_ip, a->port, &a->gs, &a->lock, &a->local_id);
+            if (!nc) sleep_ms(150);
+        }
+        if (!nc) { a->lost = TRUE; fprintf(stderr, "[migracion] no pude reconectar a %s\n", host_ip); return; }
+        a->client = nc;
+        a->gs.local_id = a->local_id;
+        client_set_chat_handler(nc, on_chat_received, a);
+        fprintf(stderr, "[migracion] reconectado al nuevo host %s como jugador %d\n",
+                host_ip, a->local_id);
+    }
+}
+
 static gboolean on_tick(gpointer data)
 {
     App *a = data;
@@ -277,15 +342,19 @@ static gboolean on_tick(gpointer data)
         a->gs.players[a->local_id].in = in;
         mutex_unlock(&a->lock);
     } else { /* CLIENT */
-        double px = VIEW_W * 0.5, py = VIEW_H * 0.5;
-        if (a->local_id >= 0) {
-            mutex_lock(&a->lock);
-            px = a->gs.players[a->local_id].x;
-            py = a->gs.players[a->local_id].y;
-            mutex_unlock(&a->lock);
+        if (!a->lost && !client_alive(a->client)) {
+            do_migration(a);                 /* el host cayo: elegir/reconectar */
+        } else if (a->client) {
+            double px = VIEW_W * 0.5, py = VIEW_H * 0.5;
+            if (a->local_id >= 0) {
+                mutex_lock(&a->lock);
+                px = a->gs.players[a->local_id].x;
+                py = a->gs.players[a->local_id].y;
+                mutex_unlock(&a->lock);
+            }
+            Input in = gather_input(a, px, py);
+            client_send_input(a->client, &in);
         }
-        Input in = gather_input(a, px, py);
-        client_send_input(a->client, &in);
     }
 
     gtk_widget_queue_draw(a->canvas);
@@ -330,6 +399,7 @@ int main(int argc, char **argv)
         }
     }
 
+    app.port = port;
     game_init(&app.gs);
 
     if (app.mode != MODE_SOLO && net_init() != 0) {

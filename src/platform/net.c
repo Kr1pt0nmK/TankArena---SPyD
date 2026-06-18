@@ -133,3 +133,13 @@ int net_recv_all(sock_t s, void *buf, int len)
     }
     return 1;
 }
+
+int net_peer_ip(sock_t s, char *out, int outlen)
+{
+    struct sockaddr_in a;
+    socklen_t len = sizeof(a);
+    if (getpeername(s, (struct sockaddr *)&a, &len) != 0)
+        return -1;
+    const char *p = inet_ntop(AF_INET, &a.sin_addr, out, outlen);
+    return p ? 0 : -1;
+}
