@@ -94,6 +94,8 @@ int enc_state(uint8_t *out, const GameState *gs)
     int o = 0;
     pu32(out, &o, (uint32_t)gs->ticks);
     pi16(out, &o, (int)lround(gs->shake * 100.0));
+    pu8(out, &o, (uint8_t)(gs->round_over ? 1 : 0));
+    pu8(out, &o, (uint8_t)(gs->round_winner < 0 ? 255 : gs->round_winner));
 
     int np = 0;
     for (int i = 0; i < MAX_PLAYERS; i++) if (gs->players[i].active) np++;
@@ -101,8 +103,12 @@ int enc_state(uint8_t *out, const GameState *gs)
     for (int i = 0; i < MAX_PLAYERS; i++) {
         const Tank *p = &gs->players[i];
         if (!p->active) continue;
+        uint8_t flags = 0;
+        if (p->alive)      flags |= 1;
+        if (p->on_foot)    flags |= 2;
+        if (p->eliminated) flags |= 4;
         pu8(out, &o, (uint8_t)i);
-        pu8(out, &o, (uint8_t)(p->alive ? 1 : 0));
+        pu8(out, &o, flags);
         pi16(out, &o, (int)lround(p->x));
         pi16(out, &o, (int)lround(p->y));
         pi16(out, &o, ang_enc(p->body_angle));
@@ -153,8 +159,13 @@ void dec_state(const uint8_t *p, int plen, GameState *gs)
     int o = 0;
     gs->ticks = gu32(p, &o);
     gs->shake = gi16(p, &o) / 100.0;
+    gs->round_over = gu8(p, &o);
+    { uint8_t w = gu8(p, &o); gs->round_winner = (w == 255) ? -1 : w; }
 
-    for (int i = 0; i < MAX_PLAYERS; i++) { gs->players[i].active = false; gs->players[i].alive = false; }
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        gs->players[i].active = false; gs->players[i].alive = false;
+        gs->players[i].on_foot = false; gs->players[i].eliminated = false;
+    }
     int np = gu8(p, &o);
     for (int k = 0; k < np; k++) {
         int id = gu8(p, &o);
@@ -166,7 +177,9 @@ void dec_state(const uint8_t *p, int plen, GameState *gs)
         if (id < 0 || id >= MAX_PLAYERS) continue;
         Tank *t = &gs->players[id];
         t->active = true;
-        t->alive = (flags & 1) != 0;
+        t->alive      = (flags & 1) != 0;
+        t->on_foot    = (flags & 2) != 0;
+        t->eliminated = (flags & 4) != 0;
         t->x = x; t->y = y;
         t->body_angle = ang_dec(ba);
         t->turret_angle = ang_dec(ta);

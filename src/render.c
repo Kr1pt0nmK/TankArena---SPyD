@@ -25,6 +25,18 @@ static void text_at(cairo_t *cr, double x, double y, const char *s,
     cairo_show_text(cr, s);
 }
 
+/* Texto centrado horizontalmente en cx, con la linea base en y. */
+static void text_center(cairo_t *cr, double cx, double y, const char *s,
+                        double size, cairo_font_weight_t weight)
+{
+    cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, weight);
+    cairo_set_font_size(cr, size);
+    cairo_text_extents_t ext;
+    cairo_text_extents(cr, s, &ext);
+    cairo_move_to(cr, cx - ext.width / 2.0 - ext.x_bearing, y);
+    cairo_show_text(cr, s);
+}
+
 /* ---------- capas ---------- */
 
 static void draw_background(cairo_t *cr)
@@ -137,6 +149,64 @@ static void draw_tank(cairo_t *cr, const Tank *t, bool is_local)
     }
 }
 
+/* Soldado a pie (un jugador que perdio su tanque y busca robar uno enemigo).
+   Vista superior orientada hacia donde camina: piernas, torso, brazos y cabeza. */
+static void draw_person(cairo_t *cr, const Tank *t, bool is_local)
+{
+    /* sombra en el piso */
+    cairo_set_source_rgba(cr, 0, 0, 0, 0.28);
+    cairo_save(cr);
+    cairo_translate(cr, t->x, t->y + 3);
+    cairo_scale(cr, 1.0, 0.6);
+    cairo_arc(cr, 0, 0, 9, 0, 2 * M_PI);
+    cairo_fill(cr);
+    cairo_restore(cr);
+
+    cairo_save(cr);
+    cairo_translate(cr, t->x, t->y);
+    cairo_rotate(cr, t->body_angle);   /* +x = hacia adelante */
+
+    double br = t->cr * 0.55, bg = t->cg * 0.55, bb = t->cb * 0.55;  /* tono oscuro */
+
+    /* piernas (dos, hacia atras) */
+    cairo_set_source_rgb(cr, br, bg, bb);
+    rounded_rect(cr, -8, -5.5, 6, 4, 1.5); cairo_fill(cr);
+    rounded_rect(cr, -8,  1.5, 6, 4, 1.5); cairo_fill(cr);
+
+    /* brazos a los lados */
+    cairo_set_source_rgb(cr, t->cr * 0.8, t->cg * 0.8, t->cb * 0.8);
+    rounded_rect(cr, -2, -8.5, 7, 3.5, 1.5); cairo_fill(cr);
+    rounded_rect(cr, -2,  5.0, 7, 3.5, 1.5); cairo_fill(cr);
+
+    /* torso (ovalo del color del jugador) */
+    cairo_set_source_rgb(cr, t->cr, t->cg, t->cb);
+    cairo_save(cr);
+    cairo_scale(cr, 1.25, 1.0);
+    cairo_arc(cr, 0, 0, 6.5, 0, 2 * M_PI);
+    cairo_fill_preserve(cr);
+    cairo_restore(cr);
+    cairo_set_source_rgba(cr, 0, 0, 0, 0.35);
+    cairo_set_line_width(cr, 1.0);
+    cairo_stroke(cr);
+
+    /* cabeza (piel) adelantada */
+    cairo_set_source_rgb(cr, 0.96, 0.82, 0.66);
+    cairo_arc(cr, 4.5, 0, 3.6, 0, 2 * M_PI);
+    cairo_fill_preserve(cr);
+    cairo_set_source_rgba(cr, 0, 0, 0, 0.3);
+    cairo_set_line_width(cr, 0.8);
+    cairo_stroke(cr);
+
+    cairo_restore(cr);
+
+    if (is_local) {
+        cairo_set_source_rgba(cr, 1, 1, 1, 0.85);
+        cairo_set_line_width(cr, 1.5);
+        cairo_arc(cr, t->x, t->y, 13, 0, 2 * M_PI);
+        cairo_stroke(cr);
+    }
+}
+
 static void draw_bullets(cairo_t *cr, const GameState *gs)
 {
     for (int i = 0; i < MAX_BULLETS; i++) {
@@ -243,6 +313,51 @@ static void draw_hud(cairo_t *cr, const GameState *gs)
             14, CAIRO_FONT_WEIGHT_NORMAL);
 }
 
+/* Anuncios centrados: a pie, eliminado, o ganador de la ronda. */
+static void draw_announcement(cairo_t *cr, const GameState *gs)
+{
+    if (gs->round_over) {
+        cairo_set_source_rgba(cr, 0, 0, 0, 0.55);
+        cairo_rectangle(cr, 0, VIEW_H / 2.0 - 52, VIEW_W, 104);
+        cairo_fill(cr);
+        char buf[64];
+        if (gs->round_winner < 0)
+            snprintf(buf, sizeof(buf), "Ronda terminada");
+        else if (gs->round_winner == gs->local_id)
+            snprintf(buf, sizeof(buf), "¡Ganaste!");
+        else
+            snprintf(buf, sizeof(buf), "Ganó el Jugador %d", gs->round_winner);
+        cairo_set_source_rgb(cr, 0.96, 0.83, 0.37);
+        text_center(cr, VIEW_W / 2.0, VIEW_H / 2.0 + 4, buf, 44, CAIRO_FONT_WEIGHT_BOLD);
+        cairo_set_source_rgba(cr, 1, 1, 1, 0.8);
+        text_center(cr, VIEW_W / 2.0, VIEW_H / 2.0 + 36,
+                    "Nueva ronda en unos segundos...", 16, CAIRO_FONT_WEIGHT_NORMAL);
+        return;
+    }
+
+    const Tank *me = NULL;
+    if (gs->local_id >= 0 && gs->local_id < MAX_PLAYERS && gs->players[gs->local_id].active)
+        me = &gs->players[gs->local_id];
+    if (!me) return;
+
+    if (me->eliminated) {
+        cairo_set_source_rgba(cr, 0, 0, 0, 0.5);
+        cairo_rectangle(cr, 0, VIEW_H / 2.0 - 42, VIEW_W, 84);
+        cairo_fill(cr);
+        cairo_set_source_rgb(cr, 0.95, 0.40, 0.35);
+        text_center(cr, VIEW_W / 2.0, VIEW_H / 2.0 - 2, "ELIMINADO", 40, CAIRO_FONT_WEIGHT_BOLD);
+        cairo_set_source_rgba(cr, 1, 1, 1, 0.85);
+        text_center(cr, VIEW_W / 2.0, VIEW_H / 2.0 + 28,
+                    "Espera a que termine la ronda", 18, CAIRO_FONT_WEIGHT_NORMAL);
+    } else if (me->on_foot) {
+        cairo_set_source_rgba(cr, 0, 0, 0, 0.45);
+        rounded_rect(cr, VIEW_W / 2.0 - 240, 70, 480, 32, 7); cairo_fill(cr);
+        cairo_set_source_rgb(cr, 0.96, 0.83, 0.37);
+        text_center(cr, VIEW_W / 2.0, 91,
+                    "¡A pie! Roba un tanque enemigo para revivir", 17, CAIRO_FONT_WEIGHT_BOLD);
+    }
+}
+
 void render_scene(const GameState *gs, cairo_t *cr)
 {
     /* screen shake */
@@ -257,7 +372,11 @@ void render_scene(const GameState *gs, cairo_t *cr)
     draw_background(cr);
     draw_walls(cr, gs);
     for (int e = 0; e < gs->enemy_count; e++) draw_tank(cr, &gs->enemies[e], false);
-    for (int i = 0; i < MAX_PLAYERS; i++) draw_tank(cr, &gs->players[i], i == gs->local_id);
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        draw_tank(cr, &gs->players[i], i == gs->local_id);
+        if (gs->players[i].active && gs->players[i].on_foot)
+            draw_person(cr, &gs->players[i], i == gs->local_id);
+    }
     draw_bullets(cr, gs);
     draw_particles(cr, gs);
     draw_blasts(cr, gs);
@@ -265,4 +384,5 @@ void render_scene(const GameState *gs, cairo_t *cr)
     cairo_restore(cr);
 
     draw_hud(cr, gs);
+    draw_announcement(cr, gs);
 }

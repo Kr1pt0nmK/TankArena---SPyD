@@ -39,7 +39,9 @@ typedef struct {
     double muzzle;         /* timer del fogonazo */
     int    fire_cd;        /* cooldown de disparo (jugadores) */
     int    fire_timer;     /* cuenta atras de disparo (enemigos) */
-    int    respawn;        /* cuenta atras de reaparicion */
+    int    respawn;        /* cuenta atras de reaparicion (enemigos) */
+    bool   on_foot;        /* soldado a pie: bajo del tanque al morir */
+    bool   eliminated;     /* fuera de la ronda: lo mataron a pie */
     Input  in;             /* input actual (jugadores) */
 } Tank;
 
@@ -83,6 +85,11 @@ typedef struct {
     unsigned long ticks;
 
     int      local_id;     /* que jugador controlo (para HUD/apuntado); -1 si ninguno */
+
+    /* ---- Ronda (todos contra todos: ultimo tanque en pie) ---- */
+    int      round_over;   /* 1 = ronda terminada, mostrando ganador */
+    int      round_winner; /* id del jugador ganador, -1 si ninguno */
+    int      round_timer;  /* cuenta atras para reiniciar la ronda */
 } GameState;
 
 void game_init(GameState *gs);

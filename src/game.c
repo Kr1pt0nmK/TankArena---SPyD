@@ -8,6 +8,9 @@
 #define BULLET_LIFE    170
 #define MOVE_SPEED     2.6
 #define ROT_SPEED      0.05
+#define FOOT_SPEED     1.7    /* el soldado a pie se mueve mas lento */
+#define FOOT_R         8.0    /* radio de colision del soldado */
+#define ROUND_RESTART  180    /* ticks que dura el anuncio antes de reiniciar (~3 s) */
 
 /* ---- Puntos de aparicion de los jugadores (zona baja, separados) ---- */
 static const double SPAWN_X[MAX_PLAYERS] = {
@@ -124,6 +127,28 @@ static void spawn_blast(GameState *gs, double x, double y, double scale)
     if (gs->shake > 12) gs->shake = 12;
 }
 
+/* Estallido de sangre: cuando matan a un soldado a pie. Particulas rojas que
+   salen disparadas, mas unas gotas oscuras grandes. */
+static void spawn_blood(GameState *gs, double x, double y)
+{
+    for (int i = 0; i < 24; i++) {
+        double a  = frand() * M_PI * 2.0;
+        double sp = 1.0 + frand() * 5.0;
+        double r  = 0.6 + frand() * 0.35;
+        spawn_particle(gs, x, y, cos(a) * sp, sin(a) * sp,
+                       16 + frand() * 22, 2 + frand() * 3.5,
+                       r, frand() * 0.08, frand() * 0.06);
+    }
+    for (int i = 0; i < 6; i++) {   /* gotas grandes y oscuras */
+        double a  = frand() * M_PI * 2.0;
+        double sp = 0.4 + frand() * 2.0;
+        spawn_particle(gs, x, y, cos(a) * sp, sin(a) * sp,
+                       30 + frand() * 22, 4 + frand() * 4, 0.45, 0.0, 0.0);
+    }
+    gs->shake += 3.5;
+    if (gs->shake > 12) gs->shake = 12;
+}
+
 static void spawn_bullet(GameState *gs, const Tank *t, int owner)
 {
     double tipx = t->x + cos(t->turret_angle) * 30.0;
@@ -178,6 +203,7 @@ void game_add_player(GameState *gs, int id)
     p->turret_angle = -M_PI / 2.0;
     game_set_player_visual(p, id);
     p->active = true; p->alive = true;
+    p->on_foot = false; p->eliminated = false;
     p->hp = 100; p->score = 0;
     p->muzzle = 0; p->fire_cd = 0; p->respawn = 0;
     p->in = (Input){0};
@@ -198,8 +224,14 @@ void game_init(GameState *gs)
     gs->ticks = 0;
     gs->shake = 0;
     gs->local_id = -1;
+    gs->round_over = 0;
+    gs->round_winner = -1;
+    gs->round_timer = 0;
 
-    for (int i = 0; i < MAX_PLAYERS; i++)   { gs->players[i].active = false; gs->players[i].alive = false; }
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        gs->players[i].active = false; gs->players[i].alive = false;
+        gs->players[i].on_foot = false; gs->players[i].eliminated = false;
+    }
     for (int i = 0; i < MAX_BULLETS; i++)   gs->bullets[i].active = false;
     for (int i = 0; i < MAX_PARTICLES; i++) gs->particles[i].active = false;
     for (int i = 0; i < MAX_BLASTS; i++)    gs->blasts[i].active = false;
@@ -258,12 +290,41 @@ static void update_players(GameState *gs)
                 p->muzzle = 4;
             }
             if (p->muzzle > 0) p->muzzle--;
-        } else {
-            if (p->respawn > 0 && --p->respawn == 0) {
-                p->alive = true; p->hp = 100;
-                p->x = SPAWN_X[i]; p->y = SPAWN_Y[i];
+        } else if (p->on_foot) {
+            /* soldado a pie: se mueve mas lento, no dispara, y busca robar un
+               tanque enemigo para revivir. */
+            Input *in = &p->in;
+            if (in->left)  p->body_angle -= ROT_SPEED;
+            if (in->right) p->body_angle += ROT_SPEED;
+
+            double mv = 0.0;
+            if (in->up)   mv += FOOT_SPEED;
+            if (in->down) mv -= FOOT_SPEED;
+            if (mv != 0.0) {
+                double nx = p->x + cos(p->body_angle) * mv;
+                double ny = p->y + sin(p->body_angle) * mv;
+                if (!game_is_wall(gs, nx, p->y)) p->x = nx;
+                if (!game_is_wall(gs, p->x, ny)) p->y = ny;
+            }
+            p->turret_angle = in->aim;
+
+            /* robar: al tocar un tanque enemigo vivo, revive en su lugar */
+            for (int e = 0; e < gs->enemy_count; e++) {
+                Tank *en = &gs->enemies[e];
+                if (!en->alive) continue;
+                if (hypot(p->x - en->x, p->y - en->y) < TANK_R + FOOT_R) {
+                    p->on_foot = false;
+                    p->alive = true;
+                    p->hp = 100;
+                    p->x = en->x; p->y = en->y;
+                    p->body_angle = en->body_angle;
+                    en->alive = false; en->respawn = 150;
+                    spawn_blast(gs, p->x, p->y, 1.0);
+                    break;
+                }
             }
         }
+        /* eliminados: no hacen nada (esperan a que termine la ronda) */
     }
 }
 
@@ -286,6 +347,44 @@ static void update_enemies(GameState *gs)
             }
         }
     }
+}
+
+/* Una bala (disparada por 'shooter': id de jugador, o <0 si es enemigo) golpea
+   a un jugador. Al tanque le baja blindaje (y si llega a 0 baja a pie); al
+   soldado a pie lo elimina de la ronda. Devuelve true si impacto a alguien. */
+static bool bullet_hits_player(GameState *gs, double bx, double by, int shooter)
+{
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (i == shooter) continue;            /* no te dañas a ti mismo */
+        Tank *pl = &gs->players[i];
+        if (!pl->active) continue;
+
+        if (pl->alive) {
+            if (hypot(bx - pl->x, by - pl->y) < TANK_R + BULLET_R) {
+                spawn_blast(gs, pl->x, pl->y, 1.0);
+                pl->hp -= 12;
+                if (pl->hp <= 0) {
+                    spawn_blast(gs, pl->x, pl->y, 2.0);
+                    pl->alive = false;
+                    pl->on_foot = true;        /* el tanque revienta -> sale a pie */
+                    pl->hp = 0;
+                    if (shooter >= 0 && shooter < MAX_PLAYERS && gs->players[shooter].active)
+                        gs->players[shooter].score++;
+                }
+                return true;
+            }
+        } else if (pl->on_foot) {
+            if (hypot(bx - pl->x, by - pl->y) < FOOT_R + BULLET_R) {
+                spawn_blood(gs, pl->x, pl->y);
+                pl->on_foot = false;
+                pl->eliminated = true;         /* mataron al soldado -> fuera de la ronda */
+                if (shooter >= 0 && shooter < MAX_PLAYERS && gs->players[shooter].active)
+                    gs->players[shooter].score++;
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 static void update_bullets(GameState *gs)
@@ -316,44 +415,13 @@ static void update_bullets(GameState *gs)
                     break;
                 }
             }
-            /* PvP (todos contra todos): tambien pega a otros jugadores. */
-            if (b->active) {
-                for (int p = 0; p < MAX_PLAYERS; p++) {
-                    if (p == b->owner) continue;        /* no te dañas a ti mismo */
-                    Tank *pl = &gs->players[p];
-                    if (!pl->active || !pl->alive) continue;
-                    if (hypot(b->x - pl->x, b->y - pl->y) < TANK_R + BULLET_R) {
-                        spawn_blast(gs, pl->x, pl->y, 1.0);
-                        pl->hp -= 12;
-                        b->active = false;
-                        if (pl->hp <= 0) {
-                            spawn_blast(gs, pl->x, pl->y, 2.0);
-                            pl->alive = false;
-                            pl->respawn = 120;
-                            if (b->owner < MAX_PLAYERS && gs->players[b->owner].active)
-                                gs->players[b->owner].score++;   /* baja por matar a otro jugador */
-                        }
-                        break;
-                    }
-                }
-            }
+            /* PvP + soldados: tambien pega a otros jugadores (excluye al tirador). */
+            if (b->active && bullet_hits_player(gs, b->x, b->y, b->owner))
+                b->active = false;
         } else {
-            /* bala de enemigo: pega a jugadores */
-            for (int p = 0; p < MAX_PLAYERS; p++) {
-                Tank *pl = &gs->players[p];
-                if (!pl->active || !pl->alive) continue;
-                if (hypot(b->x - pl->x, b->y - pl->y) < TANK_R + BULLET_R) {
-                    spawn_blast(gs, pl->x, pl->y, 1.0);
-                    pl->hp -= 12;
-                    b->active = false;
-                    if (pl->hp <= 0) {
-                        spawn_blast(gs, pl->x, pl->y, 2.0);
-                        pl->alive = false;
-                        pl->respawn = 120;
-                    }
-                    break;
-                }
-            }
+            /* bala de enemigo: pega a cualquier jugador o soldado */
+            if (bullet_hits_player(gs, b->x, b->y, -1))
+                b->active = false;
         }
     }
 }
@@ -374,11 +442,56 @@ static void update_particles(GameState *gs)
     }
 }
 
+/* Revive a todos los jugadores activos como tanques con vida llena (nueva ronda). */
+static void respawn_all_players(GameState *gs)
+{
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        Tank *p = &gs->players[i];
+        if (!p->active) continue;
+        p->alive = true; p->on_foot = false; p->eliminated = false;
+        p->hp = 100; p->fire_cd = 0; p->muzzle = 0;
+        p->x = SPAWN_X[i]; p->y = SPAWN_Y[i];
+        p->body_angle = p->turret_angle = -M_PI / 2.0;
+    }
+}
+
+/* Controla la ronda: termina cuando queda un solo jugador en pie (los demas
+   eliminados), anuncia al ganador y reinicia tras unos segundos. */
+static void update_round(GameState *gs)
+{
+    if (gs->round_over) {
+        if (--gs->round_timer <= 0) {
+            respawn_all_players(gs);
+            gs->round_over = 0;
+            gs->round_winner = -1;
+        }
+        return;
+    }
+
+    int active = 0, inplay = 0, last = -1;
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (!gs->players[i].active) continue;
+        active++;
+        if (!gs->players[i].eliminated) { inplay++; last = i; }
+    }
+
+    if (active >= 2 && inplay <= 1) {
+        /* fin de ronda: queda un solo superviviente */
+        gs->round_over = 1;
+        gs->round_winner = (inplay == 1) ? last : -1;
+        gs->round_timer = ROUND_RESTART;
+    } else if (active == 1 && inplay == 0) {
+        /* en solitario: si el unico jugador cae a pie y muere, reinicia */
+        respawn_all_players(gs);
+    }
+}
+
 void game_update(GameState *gs)
 {
     update_players(gs);
     update_enemies(gs);
     update_bullets(gs);
+    update_round(gs);
     update_particles(gs);
     if (gs->shake > 0) { gs->shake -= 0.6; if (gs->shake < 0) gs->shake = 0; }
     gs->ticks++;
