@@ -188,7 +188,7 @@ static void init_enemy(Tank *e)
     e->body_angle = e->turret_angle = M_PI / 2.0;
     game_set_enemy_visual(e);
     e->alive = true; e->active = true; e->muzzle = 0; e->hp = 1;
-    e->fire_timer = 60 + rand() % 120;
+    e->fire_timer = 20 + rand() % 40;   /* 3x mas rapido que antes */
     e->respawn = 0;
 }
 
@@ -254,7 +254,8 @@ static Tank *nearest_player(GameState *gs, const Tank *from)
     double bd = 1e18;
     for (int i = 0; i < MAX_PLAYERS; i++) {
         Tank *p = &gs->players[i];
-        if (!p->active || !p->alive) continue;
+        /* objetivo valido: un tanque vivo o un soldado a pie (no eliminados) */
+        if (!p->active || !(p->alive || p->on_foot)) continue;
         double d = hypot(p->x - from->x, p->y - from->y);
         if (d < bd) { bd = d; best = p; }
     }
@@ -337,7 +338,7 @@ static void update_enemies(GameState *gs)
             if (tg) en->turret_angle = atan2(tg->y - en->y, tg->x - en->x);
             if (--en->fire_timer <= 0) {
                 if (tg) { spawn_bullet(gs, en, -1); en->muzzle = 4; }
-                en->fire_timer = 70 + rand() % 120;
+                en->fire_timer = 24 + rand() % 40;   /* 3x mas rapido que antes */
             }
             if (en->muzzle > 0) en->muzzle--;
         } else {
@@ -362,7 +363,7 @@ static bool bullet_hits_player(GameState *gs, double bx, double by, int shooter)
         if (pl->alive) {
             if (hypot(bx - pl->x, by - pl->y) < TANK_R + BULLET_R) {
                 spawn_blast(gs, pl->x, pl->y, 1.0);
-                pl->hp -= 12;
+                pl->hp -= (shooter < 0) ? 36 : 12;   /* enemigos: triple daño */
                 if (pl->hp <= 0) {
                     spawn_blast(gs, pl->x, pl->y, 2.0);
                     pl->alive = false;
