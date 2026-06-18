@@ -371,6 +371,28 @@ static void usage(const char *prog)
         prog, prog, prog);
 }
 
+/* Localiza el archivo .glade. En la version portable va junto al .exe; en modo
+   desarrollo se usa la ruta de compilacion (UI_FILE). El llamador hace g_free. */
+static char *find_ui_file(void)
+{
+#ifdef _WIN32
+    char exepath[MAX_PATH];
+    DWORD n = GetModuleFileNameA(NULL, exepath, sizeof(exepath));
+    if (n > 0 && n < sizeof(exepath)) {
+        char *slash = strrchr(exepath, '\\');
+        if (slash) *slash = '\0';
+        /* ui/tankarena.glade junto al ejecutable, o suelto al lado del .exe */
+        char *p = g_build_filename(exepath, "ui", "tankarena.glade", NULL);
+        if (g_file_test(p, G_FILE_TEST_EXISTS)) return p;
+        g_free(p);
+        p = g_build_filename(exepath, "tankarena.glade", NULL);
+        if (g_file_test(p, G_FILE_TEST_EXISTS)) return p;
+        g_free(p);
+    }
+#endif
+    return g_strdup(UI_FILE);   /* fallback: ruta de compilacion */
+}
+
 int main(int argc, char **argv)
 {
     gtk_init(&argc, &argv);
@@ -423,7 +445,9 @@ int main(int argc, char **argv)
         app.gs.local_id = app.local_id;
     }
 
-    GtkBuilder *b = gtk_builder_new_from_file(UI_FILE);
+    char *uifile = find_ui_file();
+    GtkBuilder *b = gtk_builder_new_from_file(uifile);
+    g_free(uifile);
     GtkWidget *win = GTK_WIDGET(gtk_builder_get_object(b, "main_window"));
     app.canvas     = GTK_WIDGET(gtk_builder_get_object(b, "canvas"));
     app.chat_view  = GTK_WIDGET(gtk_builder_get_object(b, "chat_view"));

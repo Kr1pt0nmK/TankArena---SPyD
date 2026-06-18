@@ -8,6 +8,10 @@ build/
 # Imagenes generadas por el preview
 preview.png
 
+# Version portable empaquetada (se genera, no se versiona)
+TankArena-portable/
+TankArena-portable.zip
+
 # Archivos de contexto de herramientas de IA (no subir al repo, dejan rastro)
 CLAUDE.md
 GEMINI.md
