@@ -27,6 +27,9 @@ sock_t net_connect(const char *host, uint16_t port); /* conecta a host:port */
 int    net_send_all(sock_t s, const void *buf, int len); /* 0 = ok, -1 = error */
 int    net_recv_all(sock_t s, void *buf, int len);       /* 1 = ok, 0 = cerrado, -1 = error */
 
+/* Copia la IP del otro extremo del socket en out (texto, ej. "192.168.1.5"). 0 = ok. */
+int    net_peer_ip(sock_t s, char *out, int outlen);
+
 void   net_close(sock_t s);
 
 #endif /* NET_H */

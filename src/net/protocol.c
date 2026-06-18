@@ -245,3 +245,42 @@ int dec_chat(const uint8_t *p, int plen, int *sender, int *channel,
     if (channel) *channel = ch;
     return n;
 }
+
+/* ---------- PEERS ---------- */
+
+int enc_peers(uint8_t *out, const PeerInfo *peers, int n)
+{
+    int o = 0;
+    if (n > 255) n = 255;
+    pu8(out, &o, (uint8_t)n);
+    for (int i = 0; i < n; i++) {
+        int len = (int)strlen(peers[i].ip);
+        if (len > IP_MAX - 1) len = IP_MAX - 1;
+        pu8(out, &o, (uint8_t)peers[i].id);
+        pu8(out, &o, (uint8_t)len);
+        memcpy(out + o, peers[i].ip, len);
+        o += len;
+    }
+    return o;
+}
+
+int dec_peers(const uint8_t *p, int plen, PeerInfo *out, int max)
+{
+    if (plen < 1) return 0;
+    int o = 0;
+    int n = gu8(p, &o);
+    int got = 0;
+    for (int i = 0; i < n && got < max; i++) {
+        if (o + 2 > plen) break;
+        int id  = gu8(p, &o);
+        int len = gu8(p, &o);
+        if (len > IP_MAX - 1) len = IP_MAX - 1;
+        if (o + len > plen) break;
+        out[got].id = id;
+        memcpy(out[got].ip, p + o, len);
+        out[got].ip[len] = '\0';
+        o += len;
+        got++;
+    }
+    return got;
+}

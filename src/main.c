@@ -29,6 +29,8 @@ typedef struct {
 
     Server   *server;        /* host */
     Client   *client;        /* cliente */
+    uint16_t  port;          /* puerto (para reconectar/migrar) */
+    gboolean  lost;          /* true si se perdio la partida sin poder migrar */
 } App;
 
 /* Construye el input local a partir de teclado + raton. */
@@ -68,6 +70,7 @@ static gboolean on_button_press(GtkWidget *w, GdkEventButton *e, gpointer data)
 {
     (void)w;
     App *a = data;
+    gtk_widget_grab_focus(a->canvas);   /* clic en el juego = recupera el control del tanque */
     a->mouse_x = e->x; a->mouse_y = e->y; a->fmouse = TRUE;
     return FALSE;
 }
@@ -91,6 +94,13 @@ static void set_key(App *a, guint k, gboolean v)
     }
 }
 
+/* Suelta todas las teclas (evita que el tanque se quede girando al cambiar de
+   foco o de ventana con una tecla apretada). */
+static void clear_keys(App *a)
+{
+    a->kup = a->kdown = a->kleft = a->kright = a->fkb = a->fmouse = FALSE;
+}
+
 static gboolean on_key_press(GtkWidget *w, GdkEventKey *e, gpointer data)
 {
     (void)w;
@@ -99,6 +109,7 @@ static gboolean on_key_press(GtkWidget *w, GdkEventKey *e, gpointer data)
 
     /* Enter (fuera del chat): salta a la caja de texto para escribir. */
     if ((e->keyval == GDK_KEY_Return || e->keyval == GDK_KEY_KP_Enter) && !typing) {
+        clear_keys(a);                      /* suelta todo al entrar al chat */
         gtk_widget_grab_focus(a->chat_entry);
         return TRUE;
     }
@@ -107,6 +118,9 @@ static gboolean on_key_press(GtkWidget *w, GdkEventKey *e, gpointer data)
         gtk_widget_grab_focus(a->canvas);
         return TRUE;
     }
+    /* Tab no debe pasar el foco al chat mientras juegas (si no, WASD se escribe). */
+    if (!typing && (e->keyval == GDK_KEY_Tab || e->keyval == GDK_KEY_ISO_Left_Tab))
+        return TRUE;
     /* Mientras escribes, las teclas van a la caja, no al tanque. */
     if (typing) return FALSE;
 
@@ -116,9 +130,17 @@ static gboolean on_key_press(GtkWidget *w, GdkEventKey *e, gpointer data)
 static gboolean on_key_release(GtkWidget *w, GdkEventKey *e, gpointer data)
 {
     (void)w;
-    App *a = data;
-    if (gtk_widget_has_focus(a->chat_entry)) return FALSE;
-    set_key(a, e->keyval, FALSE);
+    /* Procesamos SIEMPRE el soltar tecla: si lo ignoramos cuando el chat tiene el
+       foco, se pierde el release y el tanque se queda girando. */
+    set_key(data, e->keyval, FALSE);
+    return FALSE;
+}
+
+/* La ventana pierde el foco (p.ej. Alt-Tab): suelta las teclas para no quedar girando. */
+static gboolean on_focus_out(GtkWidget *w, GdkEventFocus *e, gpointer data)
+{
+    (void)w; (void)e;
+    clear_keys((App *)data);
     return FALSE;
 }
 
@@ -240,6 +262,69 @@ static void on_chat_send(GtkEntry *entry, gpointer data)
     gtk_widget_grab_focus(a->canvas);   /* vuelve al juego */
 }
 
+/* ---------------- Migracion de host (tolerancia a fallos) ----------------
+   Si el host cae, el cliente elige al superviviente con el id mas bajo como
+   nuevo host. Ese levanta un servidor; los demas se reconectan a su IP. */
+static void do_migration(App *a)
+{
+    if (a->lost) return;
+
+    PeerInfo peers[MAX_PLAYERS];
+    int np   = client_get_peers(a->client, peers, MAX_PLAYERS);
+    int myid = client_id(a->client);
+
+    client_close(a->client);    /* cerramos el cliente caido */
+    a->client = NULL;
+
+    if (np == 0) {
+        a->lost = TRUE;
+        fprintf(stderr, "[migracion] sin lista de peers; no se puede continuar\n");
+        return;
+    }
+
+    /* eleccion: gana el id superviviente mas bajo */
+    int new_host = 9999;
+    char host_ip[IP_MAX] = "";
+    for (int i = 0; i < np; i++)
+        if (peers[i].id < new_host) {
+            new_host = peers[i].id;
+            snprintf(host_ip, IP_MAX, "%s", peers[i].ip);
+        }
+
+    fprintf(stderr, "[migracion] host caido -> nuevo host = jugador %d (yo soy %d)\n",
+            new_host, myid);
+
+    if (myid == new_host) {
+        /* Soy el nuevo host: conservo mi tanque, suelto a los demas (reconectaran)
+           y levanto el servidor en el mismo puerto. */
+        mutex_lock(&a->lock);
+        for (int i = 0; i < MAX_PLAYERS; i++)
+            if (i != myid) game_remove_player(&a->gs, i);
+        a->gs.local_id = myid;
+        mutex_unlock(&a->lock);
+
+        a->local_id = myid;
+        a->mode = MODE_HOST;
+        a->server = server_start(&a->gs, &a->lock, a->port);
+        if (!a->server) { a->lost = TRUE; fprintf(stderr, "[migracion] no pude hospedar\n"); return; }
+        server_set_chat_handler(a->server, on_chat_received, a);
+        fprintf(stderr, "[migracion] ahora soy el HOST\n");
+    } else {
+        /* Me reconecto al nuevo host (reintentos: tarda un momento en levantar). */
+        Client *nc = NULL;
+        for (int t = 0; t < 30 && !nc; t++) {
+            nc = client_connect(host_ip, a->port, &a->gs, &a->lock, &a->local_id);
+            if (!nc) sleep_ms(150);
+        }
+        if (!nc) { a->lost = TRUE; fprintf(stderr, "[migracion] no pude reconectar a %s\n", host_ip); return; }
+        a->client = nc;
+        a->gs.local_id = a->local_id;
+        client_set_chat_handler(nc, on_chat_received, a);
+        fprintf(stderr, "[migracion] reconectado al nuevo host %s como jugador %d\n",
+                host_ip, a->local_id);
+    }
+}
+
 static gboolean on_tick(gpointer data)
 {
     App *a = data;
@@ -257,15 +342,19 @@ static gboolean on_tick(gpointer data)
         a->gs.players[a->local_id].in = in;
         mutex_unlock(&a->lock);
     } else { /* CLIENT */
-        double px = VIEW_W * 0.5, py = VIEW_H * 0.5;
-        if (a->local_id >= 0) {
-            mutex_lock(&a->lock);
-            px = a->gs.players[a->local_id].x;
-            py = a->gs.players[a->local_id].y;
-            mutex_unlock(&a->lock);
+        if (!a->lost && !client_alive(a->client)) {
+            do_migration(a);                 /* el host cayo: elegir/reconectar */
+        } else if (a->client) {
+            double px = VIEW_W * 0.5, py = VIEW_H * 0.5;
+            if (a->local_id >= 0) {
+                mutex_lock(&a->lock);
+                px = a->gs.players[a->local_id].x;
+                py = a->gs.players[a->local_id].y;
+                mutex_unlock(&a->lock);
+            }
+            Input in = gather_input(a, px, py);
+            client_send_input(a->client, &in);
         }
-        Input in = gather_input(a, px, py);
-        client_send_input(a->client, &in);
     }
 
     gtk_widget_queue_draw(a->canvas);
@@ -310,6 +399,7 @@ int main(int argc, char **argv)
         }
     }
 
+    app.port = port;
     game_init(&app.gs);
 
     if (app.mode != MODE_SOLO && net_init() != 0) {
@@ -360,6 +450,7 @@ int main(int argc, char **argv)
     g_signal_connect(app.canvas, "button-release-event", G_CALLBACK(on_button_release), &app);
     g_signal_connect(win, "key-press-event",   G_CALLBACK(on_key_press),   &app);
     g_signal_connect(win, "key-release-event", G_CALLBACK(on_key_release), &app);
+    g_signal_connect(win, "focus-out-event",   G_CALLBACK(on_focus_out),   &app);
     g_signal_connect(win, "destroy",           G_CALLBACK(gtk_main_quit),  NULL);
 
     gtk_widget_show_all(win);

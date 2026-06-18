@@ -11,6 +11,7 @@ typedef struct Server Server;
 typedef struct {
     sock_t     s;
     int        id;
+    char       ip[IP_MAX];     /* IP del cliente (para migracion de host) */
     thread_t   thr;
     volatile int used;
     Server    *sv;
@@ -20,6 +21,7 @@ struct Server {
     GameState *gs;
     mutex_t   *glock;          /* protege gs */
     sock_t     listen;
+    uint16_t   port;
     volatile int running;
     thread_t   accept_thr;
     thread_t   sim_thr;
@@ -28,6 +30,26 @@ struct Server {
     chat_handler on_chat;      /* entrega los chats recibidos a la GUI del host */
     void        *chat_user;
 };
+
+/* Difunde a todos los clientes la lista de jugadores con su IP. Asi, si el host
+   cae, los supervivientes saben a quien reconectarse (migracion de host). */
+static void broadcast_peers(Server *s)
+{
+    PeerInfo peers[MAX_PLAYERS];
+    uint8_t buf[MAX_FRAME];
+    mutex_lock(&s->clock);
+    int n = 0;
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (!s->cl[i].used) continue;
+        peers[n].id = s->cl[i].id;
+        snprintf(peers[n].ip, IP_MAX, "%s", s->cl[i].ip);
+        n++;
+    }
+    int len = enc_peers(buf, peers, n);
+    for (int i = 0; i < MAX_PLAYERS; i++)
+        if (s->cl[i].used) frame_send(s->cl[i].s, MSG_PEERS, buf, (uint16_t)len);
+    mutex_unlock(&s->clock);
+}
 
 /* Hilo por cliente: recibe sus INPUT y los vuelca al estado (productor). */
 static void *client_loop(void *arg)
@@ -75,6 +97,7 @@ static void *client_loop(void *arg)
     net_close(cs->s);
     mutex_unlock(&s->clock);
 
+    broadcast_peers(s);
     fprintf(stderr, "[host] jugador %d desconectado\n", id);
     return NULL;
 }
@@ -111,12 +134,18 @@ static void *accept_loop(void *arg)
             continue;
         }
 
+        char ip[IP_MAX] = "0.0.0.0";
+        net_peer_ip(c, ip, sizeof(ip));
+
         mutex_lock(&s->clock);
-        s->cl[id].s = c; s->cl[id].id = id; s->cl[id].sv = s; s->cl[id].used = 1;
+        s->cl[id].s = c; s->cl[id].id = id; s->cl[id].sv = s;
+        snprintf(s->cl[id].ip, IP_MAX, "%s", ip);
+        s->cl[id].used = 1;
         thread_create(&s->cl[id].thr, client_loop, &s->cl[id]);
         mutex_unlock(&s->clock);
 
-        fprintf(stderr, "[host] cliente conectado como jugador %d\n", id);
+        broadcast_peers(s);
+        fprintf(stderr, "[host] cliente %s conectado como jugador %d\n", ip, id);
     }
     return NULL;
 }
@@ -147,7 +176,7 @@ Server *server_start(GameState *gs, mutex_t *lock, uint16_t port)
 {
     Server *s = (Server *)calloc(1, sizeof(*s));
     if (!s) return NULL;
-    s->gs = gs; s->glock = lock; s->running = 1;
+    s->gs = gs; s->glock = lock; s->port = port; s->running = 1;
     mutex_init(&s->clock);
 
     s->listen = net_listen(port);
@@ -163,7 +192,14 @@ void server_stop(Server *s)
 {
     if (!s) return;
     s->running = 0;
-    net_close(s->listen);              /* desbloquea accept */
+
+    /* Despierta el hilo de accept: en Linux, cerrar el socket de escucha no
+       siempre desbloquea un accept() en curso. Abrimos una conexion ficticia a
+       nosotros mismos para que accept() retorne y el hilo vea running == 0.
+       (En Windows closesocket si lo desbloquea, pero esto funciona en ambos.) */
+    sock_t waker = net_connect("127.0.0.1", s->port);
+    if (waker != SOCK_INVALID) net_close(waker);
+    net_close(s->listen);
 
     mutex_lock(&s->clock);
     for (int i = 0; i < MAX_PLAYERS; i++)

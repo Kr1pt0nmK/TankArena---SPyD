@@ -28,8 +28,13 @@ enum {
     MSG_STATE   = 4,
     MSG_CHAT    = 5,
     MSG_PING    = 6,
-    MSG_PONG    = 7
+    MSG_PONG    = 7,
+    MSG_PEERS   = 8   /* host -> clientes: lista de jugadores con su IP (para migracion) */
 };
+
+/* Info de un jugador conectado, para reconectarse si el host cae. */
+#define IP_MAX 46
+typedef struct { int id; char ip[IP_MAX]; } PeerInfo;
 
 #define PROTO_PORT 50505
 #define MAX_FRAME  4096
@@ -57,6 +62,11 @@ int  enc_chat(uint8_t *out, int sender, int channel, const char *text);
    Devuelve la longitud del texto (0 si el frame es invalido). */
 int  dec_chat(const uint8_t *p, int plen, int *sender, int *channel,
               char *text, int maxlen);
+
+/* ---------- PEERS (lista de jugadores para migracion de host) ---------- */
+/* Formato: [u8 count] y por cada uno [u8 id][u8 iplen][ip...]. */
+int  enc_peers(uint8_t *out, const PeerInfo *peers, int n);
+int  dec_peers(const uint8_t *p, int plen, PeerInfo *out, int max); /* devuelve count */
 
 /* Callback que entrega a la GUI un chat recibido. OJO: lo invoca el hilo de red,
    asi que no debe tocar GTK directamente (debe marshalear con g_idle_add). */

@@ -14,6 +14,8 @@ struct Client {
     thread_t   thr;
     chat_handler on_chat;    /* entrega los chats recibidos a la GUI */
     void        *chat_user;
+    PeerInfo    peers[MAX_PLAYERS];   /* lista de jugadores (para migracion) */
+    int         npeers;
 };
 
 /* Hilo de red: recibe STATE y reconstruye el estado (productor). */
@@ -38,6 +40,10 @@ static void *recv_loop(void *arg)
                 dec_chat(pl, plen, &sender, &channel, text, sizeof(text));
                 c->on_chat(sender, channel, text, c->chat_user);
             }
+        } else if (type == MSG_PEERS) {
+            mutex_lock(c->lock);
+            c->npeers = dec_peers(pl, plen, c->peers, MAX_PLAYERS);
+            mutex_unlock(c->lock);
         }
     }
     c->alive = 0;
@@ -102,6 +108,18 @@ void client_set_chat_handler(Client *c, chat_handler cb, void *user)
     if (!c) return;
     c->on_chat = cb;
     c->chat_user = user;
+}
+
+int client_id(Client *c) { return c ? c->local_id : -1; }
+
+int client_get_peers(Client *c, PeerInfo *out, int max)
+{
+    if (!c) return 0;
+    mutex_lock(c->lock);
+    int n = c->npeers < max ? c->npeers : max;
+    for (int i = 0; i < n; i++) out[i] = c->peers[i];
+    mutex_unlock(c->lock);
+    return n;
 }
 
 int client_alive(Client *c) { return c && c->alive; }
