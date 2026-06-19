@@ -537,7 +537,7 @@ static void on_about(GtkButton *btn, gpointer data)
         "Universidad del Istmo (UNISTMO)\n"
         "Ingeniería en Computación\n"
         "Materia: Sistemas de Cómputo Paralelo y Distribuido\n"
-        "Profesor: Dr. Arellano");
+        "Profesor: Dr. Jesus Arellano Pimentel\n");
     gtk_about_dialog_set_authors(ad, authors);
     gtk_window_set_transient_for(GTK_WINDOW(dlg),
         GTK_WINDOW(gtk_widget_get_toplevel(a->canvas)));
