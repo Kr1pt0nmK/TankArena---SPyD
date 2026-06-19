@@ -8,16 +8,17 @@
 #define BULLET_LIFE    170
 #define MOVE_SPEED     2.6
 #define ROT_SPEED      0.05
-#define FOOT_SPEED     1.7    /* el soldado a pie se mueve mas lento */
+#define FOOT_SPEED     2.4    /* el soldado a pie corre rapido (casi como el tanque) */
 #define FOOT_R         8.0    /* radio de colision del soldado */
 #define ROUND_RESTART  180    /* ticks que dura el anuncio antes de reiniciar (~3 s) */
 
 /* ---- Puntos de aparicion de los jugadores (zona baja, separados) ---- */
+/* una esquina por jugador (arriba-izq, arriba-der, abajo-izq, abajo-der) */
 static const double SPAWN_X[MAX_PLAYERS] = {
-    VIEW_W * 0.5, TILE * 2.5, VIEW_W - TILE * 2.5, VIEW_W * 0.5
+    TILE * 2.5, VIEW_W - TILE * 2.5, TILE * 2.5, VIEW_W - TILE * 2.5
 };
 static const double SPAWN_Y[MAX_PLAYERS] = {
-    VIEW_H - TILE * 2.5, VIEW_H - TILE * 2.5, VIEW_H - TILE * 2.5, VIEW_H - TILE * 4.0
+    TILE * 2.5, TILE * 2.5, VIEW_H - TILE * 2.5, VIEW_H - TILE * 2.5
 };
 
 /* ---- Mapa de la arena. 1 = pared, 0 = piso. ---- */
@@ -201,7 +202,7 @@ static void init_enemy(Tank *e)
     e->body_angle = e->turret_angle = M_PI / 2.0;
     game_set_enemy_visual(e);
     e->alive = true; e->active = true; e->muzzle = 0; e->hp = 1;
-    e->fire_timer = 20 + rand() % 40;   /* 3x mas rapido que antes */
+    e->fire_timer = 40 + rand() % 80;   /* cadencia moderada */
     e->respawn = 0;
     e->name[0] = '\0';
 }
@@ -353,7 +354,7 @@ static void update_enemies(GameState *gs)
             if (tg) en->turret_angle = atan2(tg->y - en->y, tg->x - en->x);
             if (--en->fire_timer <= 0) {
                 if (tg) { spawn_bullet(gs, en, -1); en->muzzle = 4; }
-                en->fire_timer = 24 + rand() % 40;   /* 3x mas rapido que antes */
+                en->fire_timer = 48 + rand() % 80;   /* cadencia moderada */
             }
             if (en->muzzle > 0) en->muzzle--;
         } else {
@@ -378,7 +379,7 @@ static bool bullet_hits_player(GameState *gs, double bx, double by, int shooter)
         if (pl->alive) {
             if (hypot(bx - pl->x, by - pl->y) < TANK_R + BULLET_R) {
                 spawn_blast(gs, pl->x, pl->y, 1.0);
-                pl->hp -= (shooter < 0) ? 36 : 12;   /* enemigos: triple daño */
+                pl->hp -= (shooter < 0) ? 18 : 12;   /* enemigos: daño moderado */
                 if (pl->hp <= 0) {
                     spawn_blast(gs, pl->x, pl->y, 2.0);
                     pl->alive = false;

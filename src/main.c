@@ -188,10 +188,17 @@ static gboolean chat_append_idle(gpointer data)
                       "foreground", PLAYER_HEX[k],
                       "weight", PANGO_WEIGHT_BOLD, NULL);
 
-    /* "Tu" si es mi propio mensaje; si no, "Jugador N". */
-    char name[24];
-    if (m->sender == a->local_id) snprintf(name, sizeof(name), "Tu");
-    else                          snprintf(name, sizeof(name), "Jugador %d", m->sender);
+    /* nombre real elegido por el jugador; si no tiene, "Tu"/"Jugador N". */
+    char pname[NAME_MAX] = "";
+    mutex_lock(&a->lock);
+    if (m->sender >= 0 && m->sender < MAX_PLAYERS)
+        snprintf(pname, sizeof(pname), "%s", a->gs.players[m->sender].name);
+    mutex_unlock(&a->lock);
+
+    char name[NAME_MAX + 8];
+    if (pname[0])                      snprintf(name, sizeof(name), "%s", pname);
+    else if (m->sender == a->local_id) snprintf(name, sizeof(name), "Tu");
+    else                               snprintf(name, sizeof(name), "Jugador %d", m->sender);
 
     /* nombre en color + ":" + mensaje en texto normal + salto de linea */
     gtk_text_buffer_get_end_iter(buf, &end);
@@ -643,6 +650,18 @@ int main(int argc, char **argv)
 
     gtk_widget_show_all(win);
     gtk_widget_grab_focus(app.canvas);   /* arranca con el foco en el juego */
+
+    /* nombre por defecto y dialogo inicial: elegir nombre y color antes de jugar */
+    {
+        char defname[NAME_MAX];
+        snprintf(defname, sizeof(defname), "Jugador %d", app.local_id + 1);
+        mutex_lock(&app.lock);
+        if (app.local_id >= 0 && app.local_id < MAX_PLAYERS)
+            snprintf(app.gs.players[app.local_id].name, NAME_MAX, "%s", defname);
+        mutex_unlock(&app.lock);
+    }
+    on_config(NULL, &app);
+
     g_timeout_add(16, on_tick, &app);
     gtk_main();
 
