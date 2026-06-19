@@ -534,16 +534,10 @@ static void on_about(GtkButton *btn, gpointer data)
     gtk_about_dialog_set_program_name(ad, "Tank Arena");
     gtk_about_dialog_set_version(ad, "1.0");
     gtk_about_dialog_set_comments(ad,
-        "Cómo jugar:\n"
-        "Mueve tu tanque con WASD o las flechas, apunta con el ratón y dispara\n"
-        "con clic o Espacio. Pulsa Enter para chatear.\n\n"
-        "Modo todos contra todos: si te destruyen, sales a pie como soldado y\n"
-        "puedes robar un tanque enemigo para revivir. Si te matan a pie, quedas\n"
-        "eliminado. Gana el último tanque en pie y la ronda se reinicia.\n\n"
-        "Multijugador por red: un equipo hospeda y los demás se conectan a su IP.\n\n"
-        "Hecho en C con GTK 3. Arquitectura Cliente/Servidor punto a punto con\n"
-        "sockets y paralelismo multihilo sincronizado con mutex.\n"
-        "Sistemas de Cómputo Paralelo y Distribuido — Dr. Arellano");
+        "Universidad del Istmo (UNISTMO)\n"
+        "Ingeniería en Computación\n"
+        "Materia: Sistemas de Cómputo Paralelo y Distribuido\n"
+        "Profesor: Dr. Arellano");
     gtk_about_dialog_set_authors(ad, authors);
     gtk_window_set_transient_for(GTK_WINDOW(dlg),
         GTK_WINDOW(gtk_widget_get_toplevel(a->canvas)));
