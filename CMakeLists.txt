@@ -24,14 +24,23 @@ set(NET_SOURCES
     src/net/server.c
     src/net/client.c)
 
+# Audio multiplataforma (miniaudio, una sola cabecera en third_party/)
+if(WIN32)
+    set(AUDIO_LIBS "")                 # miniaudio usa ole32/winmm, ya enlazados por GTK
+else()
+    set(AUDIO_LIBS ${CMAKE_DL_LIBS} pthread m)
+endif()
+
 # --- Juego: ventana GTK interactiva (local / host / cliente) ---
-add_executable(tank-arena src/main.c src/render.c src/game.c ${NET_SOURCES})
-target_include_directories(tank-arena PRIVATE ${GTK3_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}/include)
+add_executable(tank-arena src/main.c src/render.c src/game.c src/audio.c ${NET_SOURCES})
+target_include_directories(tank-arena PRIVATE ${GTK3_INCLUDE_DIRS}
+    ${CMAKE_SOURCE_DIR}/include ${CMAKE_SOURCE_DIR}/third_party)
 target_link_directories(tank-arena PRIVATE ${GTK3_LIBRARY_DIRS})
-target_link_libraries(tank-arena PRIVATE ${GTK3_LIBRARIES} ${NET_LIBS})
+target_link_libraries(tank-arena PRIVATE ${GTK3_LIBRARIES} ${NET_LIBS} ${AUDIO_LIBS})
 target_compile_options(tank-arena PRIVATE ${GTK3_CFLAGS_OTHER})
 target_compile_definitions(tank-arena PRIVATE
-    UI_FILE="${CMAKE_SOURCE_DIR}/ui/tankarena.glade")
+    UI_FILE="${CMAKE_SOURCE_DIR}/ui/tankarena.glade"
+    ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
 
 # --- Preview: renderiza un frame a PNG, sin ventana ---
 add_executable(preview src/preview.c src/render.c src/game.c)

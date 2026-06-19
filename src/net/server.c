@@ -84,6 +84,15 @@ static void *client_loop(void *arg)
                 dec_chat(pl, plen, &sender, &channel, text, sizeof(text));
                 s->on_chat(sender, channel, text, s->chat_user);
             }
+        } else if (type == MSG_PROFILE) {
+            /* el cliente eligio nombre y color: lo guardamos en su tanque */
+            char nm[NAME_MAX]; double r, g, b;
+            dec_profile(pl, plen, nm, sizeof(nm), &r, &g, &b);
+            mutex_lock(s->glock);
+            Tank *t = &s->gs->players[id];
+            t->cr = r; t->cg = g; t->cb = b;
+            memcpy(t->name, nm, NAME_MAX);
+            mutex_unlock(s->glock);
         }
     }
 

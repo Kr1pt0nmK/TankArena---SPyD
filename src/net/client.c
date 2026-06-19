@@ -103,6 +103,18 @@ int client_send_chat(Client *c, const char *text)
     return 0;
 }
 
+int client_send_profile(Client *c, const char *name, double r, double g, double b)
+{
+    if (!c || !c->alive) return -1;
+    uint8_t pl[3 + NAME_MAX];
+    int n = enc_profile(pl, name ? name : "", r, g, b);
+    if (frame_send(c->s, MSG_PROFILE, pl, (uint16_t)n) != 0) {
+        c->alive = 0;
+        return -1;
+    }
+    return 0;
+}
+
 void client_set_chat_handler(Client *c, chat_handler cb, void *user)
 {
     if (!c) return;

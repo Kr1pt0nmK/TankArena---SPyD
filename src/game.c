@@ -39,13 +39,26 @@ static void build_map(void)
             g_map[y * MAP_W + x] =
                 (x == 0 || y == 0 || x == MAP_W - 1 || y == MAP_H - 1) ? 1 : 0;
 
+    /* bloques de esquina */
     set_block(3, 2, 2, 2);
     set_block(MAP_W - 5, 2, 2, 2);
     set_block(3, MAP_H - 4, 2, 2);
     set_block(MAP_W - 5, MAP_H - 4, 2, 2);
-    set_block(9, 5, 2, 5);
-    set_block(6, 7, 1, 1);
-    set_block(MAP_W - 7, 7, 1, 1);
+
+    /* estructura central (dos pilares con un paso en medio) */
+    set_block(MAP_W / 2 - 1, 3, 2, 4);
+    set_block(MAP_W / 2 - 1, MAP_H - 7, 2, 4);
+
+    /* cobertura intermedia, simetrica */
+    set_block(7, 8, 2, 2);
+    set_block(MAP_W - 9, 8, 2, 2);
+    set_block(MAP_W / 2 - 1, MAP_H / 2, 2, 2);
+
+    /* puntitos sueltos */
+    set_block(6, 4, 1, 1);
+    set_block(MAP_W - 7, 4, 1, 1);
+    set_block(6, MAP_H - 5, 1, 1);
+    set_block(MAP_W - 7, MAP_H - 5, 1, 1);
 }
 
 bool game_is_wall(const GameState *gs, double px, double py)
@@ -190,6 +203,7 @@ static void init_enemy(Tank *e)
     e->alive = true; e->active = true; e->muzzle = 0; e->hp = 1;
     e->fire_timer = 20 + rand() % 40;   /* 3x mas rapido que antes */
     e->respawn = 0;
+    e->name[0] = '\0';
 }
 
 /* ---------- init / jugadores ---------- */
@@ -206,6 +220,7 @@ void game_add_player(GameState *gs, int id)
     p->on_foot = false; p->eliminated = false;
     p->hp = 100; p->score = 0;
     p->muzzle = 0; p->fire_cd = 0; p->respawn = 0;
+    p->name[0] = '\0';
     p->in = (Input){0};
 }
 

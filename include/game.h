@@ -5,9 +5,10 @@
 #include <stdint.h>
 
 /* ---- Dimensiones del mundo (en tiles y pixeles) ---- */
-#define MAP_W 20
-#define MAP_H 15
+#define MAP_W 26
+#define MAP_H 18
 #define TILE  40
+#define NAME_MAX 16   /* nombre del jugador (incluye el '\0') */
 #define VIEW_W (MAP_W * TILE)
 #define VIEW_H (MAP_H * TILE)
 
@@ -42,6 +43,7 @@ typedef struct {
     int    respawn;        /* cuenta atras de reaparicion (enemigos) */
     bool   on_foot;        /* soldado a pie: bajo del tanque al morir */
     bool   eliminated;     /* fuera de la ronda: lo mataron a pie */
+    char   name[NAME_MAX]; /* nombre elegido por el jugador */
     Input  in;             /* input actual (jugadores) */
 } Tank;
 

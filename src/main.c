@@ -12,6 +12,7 @@
 #include "protocol.h"
 #include "server.h"
 #include "client.h"
+#include "audio.h"
 
 typedef enum { MODE_SOLO, MODE_HOST, MODE_CLIENT } Mode;
 
@@ -31,6 +32,12 @@ typedef struct {
     Client   *client;        /* cliente */
     uint16_t  port;          /* puerto (para reconectar/migrar) */
     gboolean  lost;          /* true si se perdio la partida sin poder migrar */
+
+    /* estado anterior para detectar eventos y disparar sonidos */
+    int           snd_prev_bullets;
+    unsigned char snd_prev_pstate[MAX_PLAYERS];  /* 0 tanque,1 a pie,2 elim,3 ausente */
+    unsigned char snd_prev_ealive[MAX_ENEMIES];
+    gboolean      snd_ready;
 } App;
 
 /* Construye el input local a partir de teclado + raton. */
@@ -325,6 +332,39 @@ static void do_migration(App *a)
     }
 }
 
+/* Compara el estado actual con el anterior y reproduce sonidos en los eventos.
+   Funciona igual en host, cliente y solo (lee el estado ya sincronizado). */
+static void update_sounds(App *a)
+{
+    int bullets = 0;
+    unsigned char pstate[MAX_PLAYERS], ealive[MAX_ENEMIES];
+
+    mutex_lock(&a->lock);
+    for (int i = 0; i < MAX_BULLETS; i++) if (a->gs.bullets[i].active) bullets++;
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        Tank *p = &a->gs.players[i];
+        pstate[i] = !p->active ? 3 : p->eliminated ? 2 : p->on_foot ? 1 : 0;
+    }
+    for (int e = 0; e < MAX_ENEMIES; e++)
+        ealive[e] = (e < a->gs.enemy_count && a->gs.enemies[e].alive) ? 1 : 0;
+    mutex_unlock(&a->lock);
+
+    if (a->snd_ready) {
+        if (bullets > a->snd_prev_bullets) audio_play(SND_SHOT);
+        for (int i = 0; i < MAX_PLAYERS; i++) {
+            if (a->snd_prev_pstate[i] == 0 && pstate[i] == 1) audio_play(SND_EXPLOSION); /* tanque revienta -> a pie */
+            if (a->snd_prev_pstate[i] == 1 && pstate[i] == 2) audio_play(SND_SPLAT);     /* matan al soldado */
+        }
+        for (int e = 0; e < MAX_ENEMIES; e++)
+            if (a->snd_prev_ealive[e] == 1 && ealive[e] == 0) audio_play(SND_EXPLOSION); /* enemigo revienta */
+    }
+
+    a->snd_prev_bullets = bullets;
+    memcpy(a->snd_prev_pstate, pstate, sizeof(pstate));
+    memcpy(a->snd_prev_ealive, ealive, sizeof(ealive));
+    a->snd_ready = TRUE;
+}
+
 static gboolean on_tick(gpointer data)
 {
     App *a = data;
@@ -357,6 +397,7 @@ static gboolean on_tick(gpointer data)
         }
     }
 
+    update_sounds(a);
     gtk_widget_queue_draw(a->canvas);
     return G_SOURCE_CONTINUE;
 }
@@ -391,6 +432,124 @@ static char *find_ui_file(void)
     }
 #endif
     return g_strdup(UI_FILE);   /* fallback: ruta de compilacion */
+}
+
+/* Carpeta de assets (sonidos): junto al .exe en la version portable, o la ruta
+   de compilacion en desarrollo. El llamador hace g_free. */
+static char *find_assets_dir(void)
+{
+#ifdef _WIN32
+    char exepath[MAX_PATH];
+    DWORD n = GetModuleFileNameA(NULL, exepath, sizeof(exepath));
+    if (n > 0 && n < sizeof(exepath)) {
+        char *slash = strrchr(exepath, '\\');
+        if (slash) *slash = '\0';
+        char *p = g_build_filename(exepath, "assets", NULL);
+        if (g_file_test(p, G_FILE_TEST_IS_DIR)) return p;
+        g_free(p);
+    }
+#endif
+    return g_strdup(ASSETS_DIR);
+}
+
+/* ---------------- Configuracion (nombre + color) ---------------- */
+
+/* Aplica el nombre/color elegidos: si soy cliente se lo mando al host, y en
+   todos los casos lo aplico local de inmediato (el host lo confirma via STATE). */
+static void set_local_profile(App *a, const char *name, double r, double g, double b)
+{
+    if (a->mode == MODE_CLIENT && a->client)
+        client_send_profile(a->client, name, r, g, b);
+
+    mutex_lock(&a->lock);
+    if (a->local_id >= 0 && a->local_id < MAX_PLAYERS) {
+        Tank *p = &a->gs.players[a->local_id];
+        p->cr = r; p->cg = g; p->cb = b;
+        snprintf(p->name, NAME_MAX, "%s", name ? name : "");
+    }
+    mutex_unlock(&a->lock);
+}
+
+static void on_config(GtkButton *btn, gpointer data)
+{
+    (void)btn;
+    App *a = data;
+
+    /* valores actuales del jugador local */
+    char curname[NAME_MAX] = "";
+    GdkRGBA col = { 0.2, 0.7, 0.7, 1.0 };
+    mutex_lock(&a->lock);
+    if (a->local_id >= 0 && a->local_id < MAX_PLAYERS) {
+        Tank *p = &a->gs.players[a->local_id];
+        snprintf(curname, NAME_MAX, "%s", p->name);
+        col.red = p->cr; col.green = p->cg; col.blue = p->cb;
+    }
+    mutex_unlock(&a->lock);
+
+    GtkWidget *dlg = gtk_dialog_new_with_buttons("Configuración",
+        GTK_WINDOW(gtk_widget_get_toplevel(a->canvas)), GTK_DIALOG_MODAL,
+        "_Cancelar", GTK_RESPONSE_CANCEL, "_Aplicar", GTK_RESPONSE_OK, NULL);
+    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
+    gtk_container_set_border_width(GTK_CONTAINER(content), 12);
+
+    GtkWidget *grid = gtk_grid_new();
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 10);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 10);
+
+    GtkWidget *ename = gtk_entry_new();
+    gtk_entry_set_max_length(GTK_ENTRY(ename), NAME_MAX - 1);
+    gtk_entry_set_text(GTK_ENTRY(ename), curname);
+    GtkWidget *ecol = gtk_color_button_new_with_rgba(&col);
+
+    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Nombre:"),        0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), ename,                           1, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Color del tanque:"), 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), ecol,                            1, 1, 1, 1);
+    gtk_container_add(GTK_CONTAINER(content), grid);
+    gtk_widget_show_all(dlg);
+
+    if (gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_OK) {
+        const char *nm = gtk_entry_get_text(GTK_ENTRY(ename));
+        GdkRGBA c;
+        gtk_color_chooser_get_rgba(GTK_COLOR_CHOOSER(ecol), &c);
+        set_local_profile(a, nm, c.red, c.green, c.blue);
+    }
+    gtk_widget_destroy(dlg);
+    gtk_widget_grab_focus(a->canvas);
+}
+
+static void on_about(GtkButton *btn, gpointer data)
+{
+    (void)btn;
+    App *a = data;
+    const char *authors[] = {
+        "Denilson Alexis Rosado Cortez",
+        "Jared Lopez Toledo",
+        "Isacar Jimenez Charis",
+        "Gerson Antonio Regalado Lopez",
+        NULL
+    };
+    GtkWidget *dlg = gtk_about_dialog_new();
+    GtkAboutDialog *ad = GTK_ABOUT_DIALOG(dlg);
+    gtk_about_dialog_set_program_name(ad, "Tank Arena");
+    gtk_about_dialog_set_version(ad, "1.0");
+    gtk_about_dialog_set_comments(ad,
+        "Cómo jugar:\n"
+        "Mueve tu tanque con WASD o las flechas, apunta con el ratón y dispara\n"
+        "con clic o Espacio. Pulsa Enter para chatear.\n\n"
+        "Modo todos contra todos: si te destruyen, sales a pie como soldado y\n"
+        "puedes robar un tanque enemigo para revivir. Si te matan a pie, quedas\n"
+        "eliminado. Gana el último tanque en pie y la ronda se reinicia.\n\n"
+        "Multijugador por red: un equipo hospeda y los demás se conectan a su IP.\n\n"
+        "Hecho en C con GTK 3. Arquitectura Cliente/Servidor punto a punto con\n"
+        "sockets y paralelismo multihilo sincronizado con mutex.\n"
+        "Sistemas de Cómputo Paralelo y Distribuido — Dr. Arellano");
+    gtk_about_dialog_set_authors(ad, authors);
+    gtk_window_set_transient_for(GTK_WINDOW(dlg),
+        GTK_WINDOW(gtk_widget_get_toplevel(a->canvas)));
+    gtk_dialog_run(GTK_DIALOG(dlg));
+    gtk_widget_destroy(dlg);
+    gtk_widget_grab_focus(a->canvas);
 }
 
 int main(int argc, char **argv)
@@ -453,6 +612,12 @@ int main(int argc, char **argv)
     app.chat_view  = GTK_WIDGET(gtk_builder_get_object(b, "chat_view"));
     app.chat_entry = GTK_WIDGET(gtk_builder_get_object(b, "chat_entry"));
 
+    /* botones de la barra superior */
+    g_signal_connect(gtk_builder_get_object(b, "btn_config"), "clicked",
+                     G_CALLBACK(on_config), &app);
+    g_signal_connect(gtk_builder_get_object(b, "btn_about"), "clicked",
+                     G_CALLBACK(on_about), &app);
+
     const char *title = app.mode == MODE_HOST   ? "Tank Arena — HOST"
                       : app.mode == MODE_CLIENT ? "Tank Arena — CLIENTE"
                                                 : "Tank Arena — Local";
@@ -477,12 +642,18 @@ int main(int argc, char **argv)
     g_signal_connect(win, "focus-out-event",   G_CALLBACK(on_focus_out),   &app);
     g_signal_connect(win, "destroy",           G_CALLBACK(gtk_main_quit),  NULL);
 
+    /* audio: carga los sonidos y arranca la musica de fondo */
+    char *adir = find_assets_dir();
+    audio_init(adir);
+    g_free(adir);
+
     gtk_widget_show_all(win);
     gtk_widget_grab_focus(app.canvas);   /* arranca con el foco en el juego */
     g_timeout_add(16, on_tick, &app);
     gtk_main();
 
     /* --- limpieza --- */
+    audio_shutdown();
     if (app.server) server_stop(app.server);
     if (app.client) client_close(app.client);
     if (app.mode != MODE_SOLO) net_cleanup();

@@ -147,6 +147,19 @@ static void draw_tank(cairo_t *cr, const Tank *t, bool is_local)
         cairo_arc(cr, t->x, t->y, 21, 0, 2 * M_PI);
         cairo_stroke(cr);
     }
+
+    /* nombre del jugador sobre el tanque */
+    if (t->name[0]) {
+        cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+        cairo_set_font_size(cr, 12);
+        cairo_text_extents_t ext;
+        cairo_text_extents(cr, t->name, &ext);
+        double nx = t->x - ext.width / 2.0, ny = t->y - 26;
+        cairo_set_source_rgba(cr, 0, 0, 0, 0.7);
+        cairo_move_to(cr, nx + 1, ny + 1); cairo_show_text(cr, t->name);
+        cairo_set_source_rgb(cr, 1, 1, 1);
+        cairo_move_to(cr, nx, ny); cairo_show_text(cr, t->name);
+    }
 }
 
 /* Soldado a pie (un jugador que perdio su tanque y busca robar uno enemigo).

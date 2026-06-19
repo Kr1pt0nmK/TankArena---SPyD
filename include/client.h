@@ -15,6 +15,7 @@ Client *client_connect(const char *host, uint16_t port,
                        GameState *gs, mutex_t *lock, int *local_id);
 int     client_send_input(Client *c, const Input *in);  /* 0 ok, -1 error */
 int     client_send_chat(Client *c, const char *text);  /* 0 ok, -1 error */
+int     client_send_profile(Client *c, const char *name, double r, double g, double b);
 int     client_alive(Client *c);                        /* 1 conectado, 0 caido */
 int     client_id(Client *c);                           /* id de jugador asignado */
 int     client_get_peers(Client *c, PeerInfo *out, int max); /* lista de jugadores; devuelve count */

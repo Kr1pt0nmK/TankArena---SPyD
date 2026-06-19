@@ -115,6 +115,10 @@ int enc_state(uint8_t *out, const GameState *gs)
         pi16(out, &o, ang_enc(p->turret_angle));
         pi16(out, &o, p->hp);
         pu16(out, &o, (uint16_t)p->score);
+        pu8(out, &o, (uint8_t)lround(p->cr * 255.0));
+        pu8(out, &o, (uint8_t)lround(p->cg * 255.0));
+        pu8(out, &o, (uint8_t)lround(p->cb * 255.0));
+        for (int c = 0; c < NAME_MAX; c++) pu8(out, &o, (uint8_t)p->name[c]);
     }
 
     pu8(out, &o, (uint8_t)gs->enemy_count);
@@ -174,6 +178,10 @@ void dec_state(const uint8_t *p, int plen, GameState *gs)
         int16_t ba = gi16(p, &o), ta = gi16(p, &o);
         int16_t hp = gi16(p, &o);
         uint16_t sc = gu16(p, &o);
+        uint8_t cr = gu8(p, &o), cg = gu8(p, &o), cb = gu8(p, &o);
+        char nm[NAME_MAX];
+        for (int c = 0; c < NAME_MAX; c++) nm[c] = (char)gu8(p, &o);
+        nm[NAME_MAX - 1] = '\0';
         if (id < 0 || id >= MAX_PLAYERS) continue;
         Tank *t = &gs->players[id];
         t->active = true;
@@ -184,7 +192,9 @@ void dec_state(const uint8_t *p, int plen, GameState *gs)
         t->body_angle = ang_dec(ba);
         t->turret_angle = ang_dec(ta);
         t->hp = hp; t->score = sc;
-        game_set_player_visual(t, id);
+        if (cr || cg || cb) { t->cr = cr / 255.0; t->cg = cg / 255.0; t->cb = cb / 255.0; }
+        else                  game_set_player_visual(t, id);   /* sin color: por defecto */
+        memcpy(t->name, nm, NAME_MAX);
     }
 
     int ne = gu8(p, &o);
@@ -257,6 +267,38 @@ int dec_chat(const uint8_t *p, int plen, int *sender, int *channel,
     if (sender)  *sender  = s;
     if (channel) *channel = ch;
     return n;
+}
+
+/* ---------- PROFILE (nombre + color) ---------- */
+
+int enc_profile(uint8_t *out, const char *name, double r, double g, double b)
+{
+    int o = 0;
+    pu8(out, &o, (uint8_t)lround(r * 255.0));
+    pu8(out, &o, (uint8_t)lround(g * 255.0));
+    pu8(out, &o, (uint8_t)lround(b * 255.0));
+    int n = (int)strlen(name);
+    if (n > NAME_MAX - 1) n = NAME_MAX - 1;
+    memcpy(out + o, name, n);
+    o += n;
+    return o;
+}
+
+void dec_profile(const uint8_t *p, int plen, char *name, int maxlen,
+                 double *r, double *g, double *b)
+{
+    if (maxlen > 0) name[0] = '\0';
+    if (plen < 3) return;
+    int o = 0;
+    uint8_t cr = gu8(p, &o), cg = gu8(p, &o), cb = gu8(p, &o);
+    if (r) *r = cr / 255.0;
+    if (g) *g = cg / 255.0;
+    if (b) *b = cb / 255.0;
+    int n = plen - 3;
+    if (n > maxlen - 1) n = maxlen - 1;
+    if (n < 0) n = 0;
+    memcpy(name, p + o, n);
+    name[n] = '\0';
 }
 
 /* ---------- PEERS ---------- */

@@ -29,7 +29,8 @@ enum {
     MSG_CHAT    = 5,
     MSG_PING    = 6,
     MSG_PONG    = 7,
-    MSG_PEERS   = 8   /* host -> clientes: lista de jugadores con su IP (para migracion) */
+    MSG_PEERS   = 8,  /* host -> clientes: lista de jugadores con su IP (para migracion) */
+    MSG_PROFILE = 9   /* cliente -> host: nombre y color elegidos por el jugador */
 };
 
 /* Info de un jugador conectado, para reconectarse si el host cae. */
@@ -67,6 +68,12 @@ int  dec_chat(const uint8_t *p, int plen, int *sender, int *channel,
 /* Formato: [u8 count] y por cada uno [u8 id][u8 iplen][ip...]. */
 int  enc_peers(uint8_t *out, const PeerInfo *peers, int n);
 int  dec_peers(const uint8_t *p, int plen, PeerInfo *out, int max); /* devuelve count */
+
+/* ---------- PROFILE (nombre + color del jugador) ---------- */
+/* Formato: [u8 r][u8 g][u8 b][nombre hasta NAME_MAX-1 bytes]. */
+int  enc_profile(uint8_t *out, const char *name, double r, double g, double b);
+void dec_profile(const uint8_t *p, int plen, char *name, int maxlen,
+                 double *r, double *g, double *b);
 
 /* Callback que entrega a la GUI un chat recibido. OJO: lo invoca el hilo de red,
    asi que no debe tocar GTK directamente (debe marshalear con g_idle_add). */
