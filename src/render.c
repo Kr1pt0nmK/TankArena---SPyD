@@ -371,8 +371,34 @@ static void draw_announcement(cairo_t *cr, const GameState *gs)
     }
 }
 
+/* Las capas estaticas (fondo + paredes y la viñeta) no cambian durante la
+   partida: se dibujan una sola vez a una imagen en memoria y cada frame solo se
+   copian (un blit), en vez de recalcular gradientes y paredes 60 veces/seg.
+   Esto sube mucho los FPS en maquinas con grafica integrada. */
+static cairo_surface_t *g_bg  = NULL;   /* fondo + paredes (opaco) */
+static cairo_surface_t *g_vig = NULL;   /* viñeta (con transparencia) */
+
+static void ensure_cache(const GameState *gs)
+{
+    if (!g_bg) {
+        g_bg = cairo_image_surface_create(CAIRO_FORMAT_RGB24, VIEW_W, VIEW_H);
+        cairo_t *c = cairo_create(g_bg);
+        draw_background(c);
+        draw_walls(c, gs);
+        cairo_destroy(c);
+    }
+    if (!g_vig) {
+        g_vig = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, VIEW_W, VIEW_H);
+        cairo_t *c = cairo_create(g_vig);
+        draw_vignette(c);
+        cairo_destroy(c);
+    }
+}
+
 void render_scene(const GameState *gs, cairo_t *cr)
 {
+    ensure_cache(gs);
+
     /* screen shake */
     double ox = 0, oy = 0;
     if (gs->shake > 0) {
@@ -382,8 +408,10 @@ void render_scene(const GameState *gs, cairo_t *cr)
     cairo_save(cr);
     cairo_translate(cr, ox, oy);
 
-    draw_background(cr);
-    draw_walls(cr, gs);
+    cairo_set_source_surface(cr, g_bg, 0, 0);   /* fondo + paredes (cacheado) */
+    cairo_pattern_set_extend(cairo_get_source(cr), CAIRO_EXTEND_PAD);  /* sin borde en el shake */
+    cairo_paint(cr);
+
     for (int e = 0; e < gs->enemy_count; e++) draw_tank(cr, &gs->enemies[e], false);
     for (int i = 0; i < MAX_PLAYERS; i++) {
         draw_tank(cr, &gs->players[i], i == gs->local_id);
@@ -393,7 +421,9 @@ void render_scene(const GameState *gs, cairo_t *cr)
     draw_bullets(cr, gs);
     draw_particles(cr, gs);
     draw_blasts(cr, gs);
-    draw_vignette(cr);
+
+    cairo_set_source_surface(cr, g_vig, 0, 0);   /* viñeta (cacheada) */
+    cairo_paint(cr);
     cairo_restore(cr);
 
     draw_hud(cr, gs);
